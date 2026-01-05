@@ -31,6 +31,8 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 - M5 UnitCamS3-5MP 摄像头模块
 - Micro SD卡
 - USB-C线缆
+- 
+![unitCamS3-5mp](unitcam.jpg)
 
 ## Software Requirements
 ## 软件要求
