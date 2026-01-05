@@ -7,7 +7,7 @@
 A simple camera application for M5Cardputer, developed with PlatformIO, that enables MJPEG streaming and image capture with SD card storage.
 
 这是一个为M5Cardputer开发的简单相机应用，基于PlatformIO开发，支持MJPEG串流和带有SD卡存储功能的图像捕获。
-
+![cardputer_Camera](review.jpg)
 ## Features
 ## 功能特性
 
