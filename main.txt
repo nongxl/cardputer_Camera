@@ -1,0 +1,491 @@
+#include <M5Cardputer.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClient.h>
+#include <HTTPUpdate.h>
+#include <cstring>
+
+// 全局配置
+#define GLOBAL_MAX_JPEG_SIZE 60 * 1024 // 60KB 最大JPEG尺寸，进一步减小以节省内存
+
+// 日志相关定义
+const char* LOG_HDR_KEYS[] = {"Server", "Content-Type", "Content-Length", "Cache-Control", "Connection"};
+constexpr size_t LOG_HDR_KEYS_COUNT = sizeof(LOG_HDR_KEYS) / sizeof(LOG_HDR_KEYS[0]);
+
+// 应用状态
+typedef struct {
+  bool isCaptureReq;        // 拍照请求标记
+  bool isRestartStream;     // 重启流请求标记
+  bool jpegReady;           // JPEG数据就绪标记
+  
+  // 使用静态数组替代vector做JPEG数据缓冲
+  uint8_t jpegData[GLOBAL_MAX_JPEG_SIZE];
+  size_t jpegDataSize;
+} AppState;
+
+AppState appState = {
+  false,                   // isCaptureReq
+  false,                   // isRestartStream
+  false,                   // jpegReady
+  {0},                     // jpegData
+  0                        // jpegDataSize
+};
+
+// 日志函数
+void logLine(const String& line) {
+  Serial.println(line);
+  // 可以在这里添加LCD显示逻辑
+}
+
+// 记录HTTP请求头
+void logHttpRequestHeaders(const String& prefix, const String& url, const std::vector<std::pair<String, String>>& headers) {
+  String logStr = String("[") + prefix + "] Request: " + url;
+  logLine(logStr);
+  for (const auto& header : headers) {
+    logStr = String("[") + prefix + "] Header: " + header.first + ": " + header.second;
+    logLine(logStr);
+  }
+}
+
+// 记录HTTP响应头
+void logHttpResponseHeaders(const String& prefix, int code, HTTPClient& http) {
+  String logStr = String("[") + prefix + "] Response: HTTP " + code;
+  logLine(logStr);
+  for (const char* key : LOG_HDR_KEYS) {
+    String value = http.header(key);
+    if (value.length() > 0) {
+      logStr = String("[") + prefix + "] Header: " + key + ": " + value;
+      logLine(logStr);
+    }
+  }
+}
+
+// 记录原始串口数据
+void serialPrintf(const char* format, ...) {
+  char buffer[256];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(buffer, sizeof(buffer), format, args);
+  va_end(args);
+  Serial.print(buffer);
+}
+
+// 从JPEG数据中解析尺寸
+bool parseJpegSize(const uint8_t* data, size_t size, int& width, int& height) {
+  if (size < 2) {
+    return false;
+  }
+
+  // 查找SOF标记（SOF0或SOF2）
+  for (size_t i = 0; i < size - 1; ++i) {
+    if (data[i] == 0xFF) {
+      uint8_t marker = data[i + 1];
+      if (marker == 0xC0 || marker == 0xC2) {
+        // SOF标记后的数据格式：
+        // 2字节：段长度
+        // 1字节：精度
+        // 2字节：高度
+        // 2字节：宽度
+        if (i + 9 >= size) {
+          return false;
+        }
+        height = (data[i + 5] << 8) | data[i + 6];
+        width = (data[i + 7] << 8) | data[i + 8];
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// 提取完整JPEG帧（从SOI到EOI）
+static size_t trimToEOI(uint8_t* data, size_t size) {
+  if (size < 2) {
+    return 0;
+  }
+
+  size_t soiPos = 0;
+  // 查找SOI标记
+  for (; soiPos < size - 1; ++soiPos) {
+    if (data[soiPos] == 0xFF && data[soiPos + 1] == 0xD8) {
+      break;
+    }
+  }
+
+  if (soiPos >= size - 1) {
+    return 0; // 未找到SOI
+  }
+
+  size_t eoiPos = soiPos + 2;
+  // 查找EOI标记
+  for (; eoiPos < size - 1; ++eoiPos) {
+    if (data[eoiPos] == 0xFF && data[eoiPos + 1] == 0xD9) {
+      break;
+    }
+  }
+
+  if (eoiPos >= size - 1) {
+    // 未找到EOI，直接丢弃当前帧
+    return 0;
+  }
+
+  // 返回有效JPEG长度（从SOI到EOI）
+  return eoiPos - soiPos + 2;
+}
+
+// 通过相机快照接口获取并保存高清无边界JPEG
+bool captureSnapshot() {
+  // 稍作等待，确保快照端使用最新的 capture_* 参数
+  delay(200);
+
+  // 获取最新图片数据（一次性请求）
+  HTTPClient http;
+  String url = String("http://192.168.4.1/capture?") + String(millis());
+  http.begin(url);
+  // 完全镜像浏览器拍照请求头
+  http.addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36");
+  http.addHeader("Connection", "keep-alive");
+  http.addHeader("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8");
+  http.addHeader("Accept-Encoding", "gzip, deflate");
+  http.addHeader("Accept-Language", "zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6");
+  http.addHeader("DNT", "1");
+  http.addHeader("Referer", "http://192.168.4.1/");
+  http.setReuse(true);
+  http.setTimeout(15000);
+  http.collectHeaders(LOG_HDR_KEYS, LOG_HDR_KEYS_COUNT);
+  logHttpRequestHeaders("snap", url, {{"User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"},{"Connection","keep-alive"},{"Accept","image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"},{"Accept-Encoding","gzip, deflate"},{"Accept-Language","zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6"},{"DNT","1"},{"Referer","http://192.168.4.1/"}});
+  serialPrintf("[Snap] fetch GET %s\n", url.c_str());
+  int code = http.GET();
+  logHttpResponseHeaders("snap", code, http);
+  if (code != 200) {
+    serialPrintf("[Snap] HTTP %d\n", code);
+    logLine(String("[Snap] HTTP ") + code);
+    http.end();
+    return false;
+  }
+  String ct = http.header("Content-Type");
+  serialPrintf("[Snap] CT: %s\n", ct.c_str());
+  logLine(String("[Snap] CT=") + ct);
+  
+  // 验证内容类型是否为JPEG
+  if (!ct.startsWith("image/jpeg")) {
+    serialPrintf("[Snap] Unexpected content-type: %s\n", ct.c_str());
+    logLine(String("[Snap] Unexpected content-type: ") + ct);
+    http.end();
+    return false;
+  }
+  
+  WiFiClient* s = http.getStreamPtr();
+  s->setNoDelay(true);
+  s->setTimeout(10000); // 增加流读取超时时间
+  int len = http.getSize(); // -1 if unknown
+  logLine(String("[Snap] content-length=") + len);
+  
+  // 如果Content-Length过大，可能是错误
+  if (len > 5 * 1024 * 1024) { // 限制最大5MB
+    serialPrintf("[Snap] Content-Length too large: %d\n", len);
+    logLine(String("[Snap] Content-Length too large: ") + len);
+    http.end();
+    return false;
+  }
+  
+  // 使用静态数组替代栈上分配大数组
+  static uint8_t jpg[GLOBAL_MAX_JPEG_SIZE];
+  size_t jpgSize = 0;
+  
+  // 读取数据到静态数组
+  while (http.connected() && len && (jpgSize < GLOBAL_MAX_JPEG_SIZE)) {
+    int available = s->available();
+    if (available > 0) {
+      int bytesRead = s->readBytes(jpg + jpgSize, min(available, (int)(GLOBAL_MAX_JPEG_SIZE - jpgSize)));
+      jpgSize += bytesRead;
+      if (len > 0) {
+        len -= bytesRead;
+      }
+    }
+  }
+  
+  // 检查是否读取了完整数据
+  if (jpgSize >= GLOBAL_MAX_JPEG_SIZE) {
+    serialPrintf("[Snap] JPEG data too large, truncated\n");
+    logLine("[Snap] JPEG data too large, truncated");
+    http.end();
+    return false;
+  }
+  
+  // 提取完整JPEG帧
+  size_t validSize = trimToEOI(jpg, jpgSize);
+  if (validSize == 0) {
+    serialPrintf("[Snap] Invalid JPEG data, no complete frame\n");
+    logLine("[Snap] Invalid JPEG data, no complete frame");
+    http.end();
+    return false;
+  }
+  
+  // 保存到appState供后续使用
+  memcpy(appState.jpegData, jpg, validSize);
+  appState.jpegDataSize = validSize;
+  
+  // 验证JPEG尺寸
+  int width, height;
+  if (parseJpegSize(appState.jpegData, appState.jpegDataSize, width, height)) {
+    serialPrintf("[Snap] JPEG size: %dx%d\n", width, height);
+    logLine(String("[Snap] JPEG size: ") + width + "x" + height);
+  }
+  
+  http.end();
+  return true;
+}
+
+// 处理MJPEG流
+void processMjpegStream(WiFiClient& client) {
+  static uint8_t jpegBuffer[GLOBAL_MAX_JPEG_SIZE];
+  static size_t jpegIndex = 0;
+  static bool inFrame = false;
+  static uint8_t lastByte = 0;
+
+  // 每次最多处理一定字节，避免阻塞
+  const int MAX_BYTES_PER_CALL = 2048;
+  int processed = 0;
+
+  while (client.available() && processed < MAX_BYTES_PER_CALL) {
+    uint8_t data = client.read();
+    processed++;
+
+    // SOI 检测（FF D8）
+    if (!inFrame) {
+      if (lastByte == 0xFF && data == 0xD8) {
+        jpegIndex = 0;
+        jpegBuffer[jpegIndex++] = 0xFF;
+        jpegBuffer[jpegIndex++] = 0xD8;
+        inFrame = true;
+      }
+      lastByte = data;
+      continue;
+    }
+
+    // 帧内处理
+    jpegBuffer[jpegIndex++] = data;
+
+    // 超长直接丢帧
+    if (jpegIndex >= GLOBAL_MAX_JPEG_SIZE) {
+      jpegIndex = 0;
+      inFrame = false;
+      lastByte = 0;
+      continue;
+    }
+
+    // EOI 检测（FF D9）
+    if (lastByte == 0xFF && data == 0xD9) {
+      // 如果上一帧还没被消费，直接丢弃
+      if (!appState.jpegReady) {
+        memcpy(appState.jpegData, jpegBuffer, jpegIndex);
+        appState.jpegDataSize = jpegIndex;
+        appState.jpegReady = true;
+      }
+      jpegIndex = 0;
+      inFrame = false;
+    }
+
+    lastByte = data;
+  }
+}
+
+// 初始化硬件
+void initHardware() {
+  M5Cardputer.begin();
+  Serial.begin(115200);
+  
+  // 初始化LCD显示
+  M5Cardputer.Display.setRotation(1);
+  M5Cardputer.Display.fillScreen(BLACK);
+  M5Cardputer.Display.setTextSize(1);
+  M5Cardputer.Display.setTextColor(WHITE);
+}
+
+// 设置摄像头分辨率
+bool setCameraResolution() {
+  HTTPClient http;
+  String url = "http://192.168.4.1/api/v1/control?var=framesize&val=7";
+  
+  http.begin(url);
+  http.addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36");
+  http.addHeader("Connection", "keep-alive");
+  
+  int code = http.GET();
+  logHttpResponseHeaders("res", code, http);
+  
+  if (code != 200) {
+    serialPrintf("[Res] HTTP %d\n", code);
+    logLine(String("[Res] HTTP ") + code);
+    http.end();
+    return false;
+  }
+  
+  http.end();
+  logLine("摄像头分辨率设置成功");
+  return true;
+}
+
+// 初始化WiFi
+bool initWiFi() {
+  WiFi.begin("UnitCamS3-WiFi", "");
+  int retry = 0;
+  
+  while (WiFi.status() != WL_CONNECTED && retry < 20) {
+    delay(500);
+    Serial.print(".");
+    retry++;
+  }
+  
+  if (WiFi.status() != WL_CONNECTED) {
+    logLine("WiFi connect failed");
+    return false;
+  }
+  
+  logLine(String("WiFi connected: ") + WiFi.localIP().toString());
+  
+  // WiFi连接成功后设置摄像头分辨率
+  if (!setCameraResolution()) {
+    logLine("设置摄像头分辨率失败");
+    return false;
+  }
+  
+  return true;
+}
+
+// 主循环
+void loop() {
+  M5Cardputer.update();
+  
+  // 处理用户按键
+  if (M5Cardputer.Keyboard.isChange()) {
+    M5Cardputer.Keyboard.updateKeysState();
+    if (M5Cardputer.Keyboard.isKeyPressed('r')) {
+      logLine("用户请求重启设备");
+      M5Cardputer.Display.fillScreen(BLACK);
+      M5Cardputer.Display.setCursor(10, 30);
+      M5Cardputer.Display.setTextSize(2);
+      M5Cardputer.Display.println("Restarting device...");
+      delay(1000);
+      ESP.restart();
+    }
+  }
+  
+  // 处理BtnA按键（拍照）
+  if (M5Cardputer.BtnA.wasPressed()) {
+    appState.isCaptureReq = true;
+  }
+  
+  // 处理拍照请求
+  if (appState.isCaptureReq) {
+    appState.isCaptureReq = false;
+    logLine("处理拍照请求...");
+    if (captureSnapshot()) {
+      logLine("拍照成功");
+      // 可以在这里添加显示或保存逻辑
+    } else {
+      logLine("拍照失败");
+    }
+  }
+  
+  // 处理流数据
+  static WiFiClient client;
+  static HTTPClient http;
+  
+  // 检查WiFi连接状态
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!client.connected()) {
+      if (appState.isRestartStream || !http.connected()) {
+        appState.isRestartStream = false;
+        http.end();
+        client.stop();
+        
+        logLine("连接MJPEG流...");
+        String url = "http://192.168.4.1/api/v1/stream";
+        http.begin(client, url);
+        http.addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36");
+        http.addHeader("Connection", "keep-alive");
+        
+        int code = http.GET();
+        if (code != 200) {
+          logLine(String("连接MJPEG流失败: HTTP ") + code);
+          http.end();
+          delay(2000);
+          return;
+        }
+        
+        logLine("MJPEG流连接成功");
+      }
+    } else {
+      // 处理流数据
+      processMjpegStream(client);
+    }
+  } else {
+    // WiFi未连接，停止当前连接
+    if (client.connected()) {
+      client.stop();
+      http.end();
+    }
+    // 每隔5秒检查一次WiFi状态
+    static unsigned long lastWifiCheck = 0;
+    if (millis() - lastWifiCheck > 5000) {
+      lastWifiCheck = millis();
+      logLine("WiFi未连接，等待网络恢复...");
+    }
+  }
+  
+  // 显示JPEG帧
+  if (appState.jpegReady) {
+    // 获取JPEG尺寸
+    int imgWidth, imgHeight;
+    if (parseJpegSize(appState.jpegData, appState.jpegDataSize, imgWidth, imgHeight)) {
+      // M5Cardputer屏幕分辨率
+      const int screenWidth = 240;
+      const int screenHeight = 135;
+      
+      // 计算显示起始位置（居中显示）
+      int x = 0;
+      int y = 0;
+      
+      // 如果图像宽度大于屏幕宽度，只显示中间部分
+      if (imgWidth > screenWidth) {
+        x = -(imgWidth - screenWidth) / 2;
+      }
+      
+      // 如果图像高度大于屏幕高度，只显示中间部分
+      if (imgHeight > screenHeight) {
+        y = -(imgHeight - screenHeight) / 2;
+      }
+      
+      // 显示JPEG帧到LCD
+      M5Cardputer.Display.drawJpg(appState.jpegData, appState.jpegDataSize, x, y);
+    } else {
+      // 如果无法解析尺寸，默认显示左上角
+      M5Cardputer.Display.drawJpg(appState.jpegData, appState.jpegDataSize, 0, 0);
+    }
+    
+    // 显示后重置就绪标记
+    appState.jpegReady = false;
+  }
+  
+  delay(10);
+}
+
+// 主函数
+void setup() {
+  initHardware();
+  if (!initWiFi()) {
+    logLine("WiFi初始化失败");
+    M5Cardputer.Display.setCursor(10, 30);
+    M5Cardputer.Display.setTextSize(2);
+    M5Cardputer.Display.println("WiFi connect failed");
+    M5Cardputer.Display.setTextSize(1);
+    M5Cardputer.Display.println("please check network config");
+    M5Cardputer.Display.println("press R to restart");
+  } else {
+    logLine("相机应用初始化完成");
+    // 清除屏幕，准备显示串流画面
+    M5Cardputer.Display.fillScreen(BLACK);
+  }
+}

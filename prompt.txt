@@ -1,0 +1,297 @@
+你是一名经验丰富的嵌入式 C++ 工程师，熟悉 ESP32、M5Stack Cardputer、PlatformIO、HTTP 串流、JPEG 解码、内存受限系统优化。
+你的目标是：写出稳定、可调试、可逐步验证的代码，而不是一次性堆功能。
+
+🎯 项目目标（仅实现最小可用版本）
+
+我正在为 M5 Cardputer 开发一款相机应用，摄像头是 UnitCamS3-5MP，两者通过 Wi-Fi + HTTP API 通信。
+当前阶段只实现最基础功能，不做任何额外优化或扩展。
+
+📦 硬件与环境约束（必须严格遵守）
+
+开发环境：PlatformIO
+
+语言：C++
+
+主控：M5 Cardputer（240×135 屏幕）
+
+摄像头：UnitCamS3-5MP
+
+摄像头 Wi-Fi AP：
+
+SSID: UnitCamS3-WiFi
+IP:   192.168.4.1
+
+📷 功能需求（按顺序、逐步实现）
+1️⃣ 启动与网络连接
+
+上电后仅做以下事情：
+
+初始化屏幕
+
+连接 Wi-Fi：UnitCamS3-WiFi
+
+必须阻塞等待 Wi-Fi 连接成功
+
+屏幕上显示当前状态（连接中 / 已连接 / 失败）
+
+2️⃣ 设置低分辨率（确保串流流畅）
+
+Wi-Fi 连接成功后，通过 HTTP GET 设置摄像头分辨率：
+
+http://192.168.4.1/api/v1/control?var=framesize&val=6
+
+
+不做拍照、不拉流之前，必须先成功设置分辨率
+
+若失败，屏幕提示错误，不进入下一步
+
+3️⃣ 实时取景（HTTP MJPEG 串流）
+
+使用串流地址：
+
+http://192.168.4.1/api/v1/stream
+
+
+从 MJPEG 流中：
+
+正确分离 JPEG 帧
+
+解码为 RGB
+
+只显示画面中央区域
+
+原始分辨率：640×480
+
+屏幕分辨率：240×135
+
+裁切规则：居中裁切，不拉伸、不缩放
+
+严格控制内存使用，避免一次性分配大 buffer
+
+4️⃣ 拍照（BtnA）
+
+用户按下 BtnA：
+
+立即停止串流
+
+调用拍照接口：
+
+http://192.168.4.1/api/v1/capture
+
+
+将返回的 JPEG 原样保存到 SD 卡：
+
+/images/xxxx.jpg
+
+
+文件名使用递增编号或时间戳
+
+不做图片处理
+
+保存完成后：
+
+再次设置低分辨率
+
+恢复实时串流取景
+
+🚫 明确禁止的行为（避免踩坑）
+
+❌ 不要引入以下内容：
+
+不要用异步框架（AsyncTCP / AsyncWebServer）
+
+不要一次性写完整项目
+
+不要做 UI 动画、美化、菜单系统
+
+不要引入 FreeRTOS 任务，除非明确说明原因
+
+不要使用动态内存频繁 new / delete
+
+不要假设 MJPEG 数据是完整对齐的
+
+🧱 代码结构要求（必须遵守）
+
+请将代码明确拆分为以下模块：
+
+wifi_manager.*
+
+只负责 Wi-Fi 连接
+
+camera_http.*
+
+负责 control / stream / capture 接口
+
+mjpeg_decoder.*
+
+负责 MJPEG 帧提取（不负责显示）
+
+display_renderer.*
+
+负责裁切并显示到屏幕
+
+storage_manager.*
+
+只负责 SD 卡和文件保存
+
+main.cpp
+
+只做流程调度
+
+🧪 调试与验证要求
+
+每一步都必须：
+
+给出串口日志
+
+给出失败处理逻辑
+
+每完成一个阶段，先给出可编译的最小代码
+
+在继续下一个阶段前，先说明：
+
+「当前阶段可能的风险点有哪些」
+
+📌 输出格式要求
+
+先给出整体架构说明
+
+再给出当前阶段的代码
+
+最后列出：
+
+已验证功能
+
+下一步计划
+
+已知限制
+
+如果你觉得某一步在 M5 Cardputer 的内存或性能上不可行，
+必须明确指出原因，并给出保守替代方案，而不是“试试看”。
+
+
+
+【MJPEG 帧提取重构 Prompt】
+
+你正在为 ESP32（M5 Cardputer） 编写 MJPEG 串流解析代码，请严格遵守以下规则：
+
+🎯 目标
+
+从 HTTP MJPEG 流中 稳定、低抖动地提取完整 JPEG 帧，用于实时取景显示。
+
+🚫 明确禁止的行为（必须遵守）
+
+❌ 禁止在未接收到完整 JPEG 的情况下解码
+
+❌ 禁止“手动补 EOI（0xFFD9）”
+
+❌ 禁止使用 std::vector 做帧缓冲
+
+❌ 禁止对同一帧数据多次扫描 SOI / EOI
+
+❌ 禁止为每一帧动态申请 / 释放内存
+
+✅ 正确的 MJPEG 处理模型（必须实现）
+1️⃣ 使用固定大小的静态帧缓冲区
+static uint8_t jpegBuffer[MAX_JPEG_SIZE];
+static size_t jpegIndex = 0;
+static bool inFrame = false;
+
+
+MAX_JPEG_SIZE 需根据分辨率设置（如 100~150KB）
+
+缓冲区 全程复用
+
+2️⃣ 按字节流方式处理 TCP 数据
+
+对于每一次 client.read() 得到的数据：
+
+逐字节扫描：
+
+如果发现 0xFF 0xD8：
+
+清空 buffer
+
+标记 inFrame = true
+
+开始写入
+
+如果 inFrame == true：
+
+将字节写入 jpegBuffer
+
+如果发现 0xFF 0xD9 且 inFrame == true：
+
+标记一帧完成
+
+返回 JPEG 长度
+
+设置 inFrame = false
+
+3️⃣ 不完整帧直接丢弃
+
+如果 buffer 超过 MAX_JPEG_SIZE：
+
+立即丢弃当前帧
+
+重置状态
+
+如果未遇到 EOI：
+
+不做任何“修复”
+
+等下一帧
+
+4️⃣ 解码策略
+
+只有在完整 JPEG 帧确认完成后，才调用 JPEG 解码
+
+如果正在解码上一帧：
+
+新帧直接丢弃（允许丢帧）
+
+🧪 调试要求
+
+串口日志仅允许：
+
+帧完成
+
+帧丢弃（原因：超长 / 解码中）
+
+不允许打印原始数据内容
+
+📌 输出要求
+
+请输出：
+
+MJPEG 帧提取模块完整代码
+
+关键状态机说明
+
+为什么这种方式能避免色块 / 黑线 / 卡顿
+
+最后再检查一遍。在 MJPEG 解码与 JPEG 处理代码中：
+完全移除任何“标准 DHT 段补齐 / JPEG 修复”逻辑
+假设来自 UnitCamS3摄像头 的 JPEG 是完整、标准的 JPEG
+若解码失败：
+仅视为“帧不完整”
+直接丢弃该帧
+不允许对 JPEG 数据内容进行任何结构性修改
+（包括插入 DHT、补 EOI、裁剪中段等）
+
+
+
+拍摄动作的流程：停止流→设置高分辨率（/api/v1/control?var=framesize&val=10）→拍摄→设置低分辨率(/api/v1/control?var=framesize&val=7)→恢复流
+
+UnitCamS3-5MP支持的分辨率参数：
+0 96*96
+1 128*128
+6 320*240
+10 640*480
+13 1280*720
+15 JPEG data too large
+16 1920*1080 IMG_19700101_004508.jpg
+17 640*480
+24 JPEG data too large
+25 JPEG data too large
+26 JPEG data too large

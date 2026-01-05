@@ -1,0 +1,259 @@
+
+# 请求 1
+response = client.sendAndRecv(
+'GET',
+  'http://192.168.4.1/',
+  headers={
+    'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+    'Accept-Encoding':'gzip, deflate',
+    'Accept-Language':'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+    'Cache-Control':'max-age=0',
+    'Connection':'keep-alive',
+    'DNT':'1',
+    'Host':'192.168.4.1',
+    'Upgrade-Insecure-Requests':'1',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+  },
+
+  
+)
+
+
+# 请求 2
+response = client.sendAndRecv(
+'GET',
+  'http://192.168.4.1/m5.jpg',
+  headers={
+    'Accept':'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+    'Accept-Encoding':'gzip, deflate',
+    'Accept-Language':'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+    'Connection':'keep-alive',
+    'DNT':'1',
+    'Host':'192.168.4.1',
+    'Referer':'http://192.168.4.1/',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+  },
+
+  
+)
+
+
+# 请求 3
+response = client.sendAndRecv(
+'GET',
+  'http://192.168.4.1/api/v1/capture?1765612193870',
+  headers={
+    'Accept':'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+    'Accept-Encoding':'gzip, deflate',
+    'Accept-Language':'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+    'Connection':'keep-alive',
+    'DNT':'1',
+    'Host':'192.168.4.1',
+    'Referer':'http://192.168.4.1/',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+  },
+
+  
+)
+
+
+
+# stream
+response = client.sendAndRecv(
+'GET',
+  'http://192.168.4.1/api/v1/stream',
+  headers={
+    'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+    'Accept-Encoding':'gzip, deflate',
+    'Accept-Language':'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+    'Connection':'keep-alive',
+    'DNT':'1',
+    'Host':'192.168.4.1',
+    'Referer':'http://192.168.4.1/',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+  },
+
+  
+)
+'''
+#steam的响应标头如下
+HTTP/1.1 200 OK
+Content-Type: multipart/x-mixed-replace;boundary=123456789000000000000987654321
+Access-Control-Allow-Origin: *
+Connection: close
+Accept-Ranges: none
+Transfer-Encoding: chunked
+'''
+
+# 请求 5
+response = client.sendAndRecv(
+'GET',
+  'http://192.168.4.1/api/v1/check_sdcard',
+  headers={
+    'Accept':'*/*',
+    'Accept-Encoding':'gzip, deflate',
+    'Accept-Language':'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+    'Connection':'keep-alive',
+    'DNT':'1',
+    'Host':'192.168.4.1',
+    'Referer':'http://192.168.4.1/',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+  },
+
+  
+)
+
+
+# 请求 6
+response = client.sendAndRecv(
+'GET',
+  'http://192.168.4.1/api/v1/mic_start',
+  headers={
+    'Accept':'*/*',
+    'Accept-Encoding':'gzip, deflate',
+    'Accept-Language':'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+    'Connection':'keep-alive',
+    'DNT':'1',
+    'Host':'192.168.4.1',
+    'Referer':'http://192.168.4.1/',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+  },
+
+  
+)
+
+
+# 请求 7
+response = client.sendAndRecv(
+'GET',
+  'http://192.168.4.1/api/v1/mic_is_recording',
+  headers={
+    'Accept':'*/*',
+    'Accept-Encoding':'gzip, deflate',
+    'Accept-Language':'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+    'Connection':'keep-alive',
+    'DNT':'1',
+    'Host':'192.168.4.1',
+    'Referer':'http://192.168.4.1/',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+  },
+
+  
+)
+
+
+# 请求 8
+response = client.sendAndRecv(
+'GET',
+  'http://192.168.4.1/api/v1/mic_is_recording',
+  headers={
+    'Accept':'*/*',
+    'Accept-Encoding':'gzip, deflate',
+    'Accept-Language':'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+    'Connection':'keep-alive',
+    'DNT':'1',
+    'Host':'192.168.4.1',
+    'Referer':'http://192.168.4.1/',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+  },
+
+  
+)
+
+
+# 请求 9
+response = client.sendAndRecv(
+'GET',
+  'http://192.168.4.1/api/v1/mic_is_recording',
+  headers={
+    'Accept':'*/*',
+    'Accept-Encoding':'gzip, deflate',
+    'Accept-Language':'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+    'Connection':'keep-alive',
+    'DNT':'1',
+    'Host':'192.168.4.1',
+    'Referer':'http://192.168.4.1/',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+  },
+
+  
+)
+
+
+# 请求 10
+response = client.sendAndRecv(
+'GET',
+  'http://192.168.4.1/wav/rec.wav',
+  headers={
+    'Accept':'*/*',
+    'Accept-Encoding':'identity;q=1, *;q=0',
+    'Accept-Language':'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+    'Connection':'keep-alive',
+    'DNT':'1',
+    'Host':'192.168.4.1',
+    'Range':'bytes=0-',
+    'Referer':'http://192.168.4.1/',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+  },
+
+  
+)
+
+
+# 请求 11
+response = client.sendAndRecv(
+'GET',
+  'http://192.168.4.1/wav/rec.wav',
+  headers={
+    'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+    'Accept-Encoding':'gzip, deflate',
+    'Accept-Language':'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+    'Connection':'keep-alive',
+    'DNT':'1',
+    'Host':'192.168.4.1',
+    'Referer':'http://192.168.4.1/',
+    'Upgrade-Insecure-Requests':'1',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+  },
+
+  
+)
+
+
+# 请求 12
+response = client.sendAndRecv(
+'GET',
+  'http://192.168.4.1/api/v1/led_off',
+  headers={
+    'Accept':'*/*',
+    'Accept-Encoding':'gzip, deflate',
+    'Accept-Language':'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+    'Connection':'keep-alive',
+    'DNT':'1',
+    'Host':'192.168.4.1',
+    'Referer':'http://192.168.4.1/',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+  },
+
+  
+)
+
+
+# 请求 13
+response = client.sendAndRecv(
+'GET',
+  'http://192.168.4.1/api/v1/led_on',
+  headers={
+    'Accept':'*/*',
+    'Accept-Encoding':'gzip, deflate',
+    'Accept-Language':'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+    'Connection':'keep-alive',
+    'DNT':'1',
+    'Host':'192.168.4.1',
+    'Referer':'http://192.168.4.1/',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+  },
+
+  
+)
+

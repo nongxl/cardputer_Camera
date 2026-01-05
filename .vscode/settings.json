@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "*.cpp-bak": "cpp",
+        "istream": "cpp",
+        "ostream": "cpp"
+    }
+}
