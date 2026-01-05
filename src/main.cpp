@@ -9,7 +9,7 @@
 #include <time.h>
 
 // 全局配置
-#define GLOBAL_MAX_JPEG_SIZE 70 * 1024 // 75KB最大JPEG尺寸，进一步减小以节省内存
+#define GLOBAL_MAX_JPEG_SIZE 70 * 1024 // 65KB最大JPEG尺寸，进一步减小以节省内存
 
 // 相机分辨率常量
 #define CAMERA_RESOLUTION_HIGH 13     // 高分辨率 (1280*720)，用于拍摄照片
@@ -54,22 +54,22 @@ void logLine(const String& line) {
 // 记录HTTP请求头
 void logHttpRequestHeaders(const String& prefix, const String& url, const std::vector<std::pair<String, String>>& headers) {
   String logStr = String("[") + prefix + "] Request: " + url;
-  logLine(logStr);
+  // logLine(logStr);
   for (const auto& header : headers) {
     logStr = String("[") + prefix + "] Header: " + header.first + ": " + header.second;
-    logLine(logStr);
+    // logLine(logStr);
   }
 }
 
 // 记录HTTP响应头
 void logHttpResponseHeaders(const String& prefix, int code, HTTPClient& http) {
   String logStr = String("[") + prefix + "] Response: HTTP " + code;
-  logLine(logStr);
+  // logLine(logStr);
   for (const char* key : LOG_HDR_KEYS) {
     String value = http.header(key);
     if (value.length() > 0) {
       logStr = String("[") + prefix + "] Header: " + key + ": " + value;
-      logLine(logStr);
+      // logLine(logStr);
     }
   }
 }
@@ -115,6 +115,9 @@ bool parseJpegSize(const uint8_t* data, size_t size, int& width, int& height) {
 // setCameraResolution函数的前向声明
 bool setCameraResolution(int resolution);
 
+// setCameraQuality函数的前向声明
+bool setCameraQuality(int quality);
+
 // 提取完整的JPEG帧（从SOI到EOI）
 static size_t trimToEOI(uint8_t* data, size_t size) {
   if (size < 2) {
@@ -153,10 +156,10 @@ static size_t trimToEOI(uint8_t* data, size_t size) {
 // 通过相机快照接口获取并保存高清无边框JPEG
 bool captureSnapshot() {
   // 稍等片刻以确保快照使用最新的capture_*参数
-  delay(200);
+  delay(500);
 
   // 拍摄前停止MJPEG流以防止资源冲突
-  logLine("Stopping MJPEG stream before capture...");
+  // logLine("Stopping MJPEG stream before capture...");
   
   // 使用全局变量直接停止流
   streamHttp.end();
@@ -166,9 +169,15 @@ bool captureSnapshot() {
   delay(500);
   
   // 设置高分辨率（拍摄前）
-  logLine("Setting high resolution before capture...");
+  // logLine("Setting high resolution before capture...");
   if (!setCameraResolution(CAMERA_RESOLUTION_HIGH)) {
-    logLine("Failed to set high resolution");
+    // logLine("Failed to set high resolution");
+    return false;
+  }
+  
+  // 设置高质量（拍摄前）
+  if (!setCameraQuality(2)) {
+    // logLine("Failed to set high quality");
     return false;
   }
   
@@ -189,7 +198,7 @@ bool captureSnapshot() {
   http.end();
   
   // 等待相机处理新图像
-  logLine("Waiting for camera to process new image...");
+  // logLine("Waiting for camera to process new image...");
   delay(500);
   
   // 第二次请求：获取新的图像数据
@@ -203,18 +212,18 @@ bool captureSnapshot() {
   
   if (code != 200) {
     serialPrintf("[Snap] HTTP %d\n", code);
-    logLine(String("[Snap] HTTP ") + code);
+    // logLine(String("[Snap] HTTP ") + code);
     http.end();
     return false;
   }
   String ct = http.header("Content-Type");
   serialPrintf("[Snap] CT: %s\n", ct.c_str());
-  logLine(String("[Snap] CT=") + ct);
+  // logLine(String("[Snap] CT=") + ct);
   
   // 验证内容类型是否为JPEG，但允许空内容类型（相机API可能不设置它）
   if (!ct.isEmpty() && !ct.startsWith("image/jpeg")) {
     serialPrintf("[Snap] Unexpected content-type: %s\n", ct.c_str());
-    logLine(String("[Snap] Unexpected content-type: ") + ct);
+    // logLine(String("[Snap] Unexpected content-type: ") + ct);
     http.end();
     return false;
   }
@@ -225,12 +234,12 @@ bool captureSnapshot() {
   s->setNoDelay(true);
   s->setTimeout(10000); // 增加流读取超时时间
   int len = http.getSize(); // 如果未知则为-1
-  logLine(String("[Snap] content-length=") + len);
+  // logLine(String("[Snap] content-length=") + len);
   
   // 如果Content-Length过大，可能是错误
   if (len > 5 * 1024 * 1024) { // 限制最大5MB
     serialPrintf("[Snap] Content-Length too large: %d\n", len);
-    logLine(String("[Snap] Content-Length too large: ") + len);
+    // logLine(String("[Snap] Content-Length too large: ") + len);
     http.end();
     return false;
   }
@@ -254,7 +263,7 @@ bool captureSnapshot() {
   // 检查是否读取了完整数据
   if (jpgSize >= GLOBAL_MAX_JPEG_SIZE) {
     serialPrintf("[Snap] JPEG data too large, truncated\n");
-    logLine("[Snap] JPEG数据过大，已截断");
+    // logLine("[Snap] JPEG数据过大，已截断");
     http.end();
     return false;
   }
@@ -263,7 +272,7 @@ bool captureSnapshot() {
   size_t validSize = trimToEOI(jpg, jpgSize);
   if (validSize == 0) {
     serialPrintf("[Snap] Invalid JPEG data, no complete frame\n");
-    logLine("[Snap] 无效的JPEG数据，没有完整帧");
+    // logLine("[Snap] 无效的JPEG数据，没有完整帧");
     http.end();
     return false;
   }
@@ -276,20 +285,26 @@ bool captureSnapshot() {
   int width, height;
   if (parseJpegSize(appState.jpegData, appState.jpegDataSize, width, height)) {
     serialPrintf("[Snap] JPEG size: %dx%d\n", width, height);
-    logLine(String("[Snap] JPEG尺寸: ") + width + "x" + height);
+    // logLine(String("[Snap] JPEG尺寸: ") + width + "x" + height);
   }
   
   http.end();
   
   // 设置低分辨率（拍摄后）
-  logLine("Setting low resolution after capture...");
+  // logLine("Setting low resolution after capture...");
   if (!setCameraResolution(CAMERA_RESOLUTION_LOW)) {
-    logLine("Failed to set low resolution");
+    // logLine("Failed to set low resolution");
+    return false;
+  }
+  
+  // 设置低质量（拍摄后，恢复串流模式）
+  if (!setCameraQuality(0)) {
+    // logLine("Failed to set low quality");
     return false;
   }
   
   // 拍摄后重启MJPEG流
-  logLine("Restarting MJPEG stream after capture...");
+  // logLine("Restarting MJPEG stream after capture...");
   appState.isRestartStream = true;
   
   return true;
@@ -311,38 +326,35 @@ void processMjpegStream(WiFiClient& client) {
     processed++;
 
     // SOI检测 (FF D8)
-    if (!inFrame) {
-      if (lastByte == 0xFF && data == 0xD8) {
+    if (lastByte == 0xFF && data == 0xD8) {
+      // 检测到SOI，无条件清空所有状态，确保jpegBuffer从SOI开始
+      jpegIndex = 0;
+      jpegBuffer[jpegIndex++] = 0xFF;
+      jpegBuffer[jpegIndex++] = 0xD8;
+      inFrame = true;
+    } else if (inFrame) {
+      // 帧内处理
+      jpegBuffer[jpegIndex++] = data;
+
+      // 如果帧太长则直接丢弃
+      if (jpegIndex >= GLOBAL_MAX_JPEG_SIZE) {
         jpegIndex = 0;
-        jpegBuffer[jpegIndex++] = 0xFF;
-        jpegBuffer[jpegIndex++] = 0xD8;
-        inFrame = true;
+        inFrame = false;
+        lastByte = 0;
+        continue;
       }
-      lastByte = data;
-      continue;
-    }
 
-    // 帧内处理
-    jpegBuffer[jpegIndex++] = data;
-
-    // 如果帧太长则直接丢弃
-    if (jpegIndex >= GLOBAL_MAX_JPEG_SIZE) {
-      jpegIndex = 0;
-      inFrame = false;
-      lastByte = 0;
-      continue;
-    }
-
-    // EOI检测 (FF D9)
-    if (lastByte == 0xFF && data == 0xD9) {
-      // 如果上一帧还未被消费则直接丢弃
-      if (!appState.jpegReady) {
-        memcpy(appState.jpegData, jpegBuffer, jpegIndex);
-        appState.jpegDataSize = jpegIndex;
-        appState.jpegReady = true;
+      // EOI检测 (FF D9)
+      if (lastByte == 0xFF && data == 0xD9) {
+        // 如果上一帧还未被消费则直接丢弃
+        if (!appState.jpegReady) {
+          memcpy(appState.jpegData, jpegBuffer, jpegIndex);
+          appState.jpegDataSize = jpegIndex;
+          appState.jpegReady = true;
+        }
+        jpegIndex = 0;
+        inFrame = false;
       }
-      jpegIndex = 0;
-      inFrame = false;
     }
 
     lastByte = data;
@@ -413,7 +425,7 @@ bool setCameraResolution(int resolution) {
   
   if (code != 200) {
     serialPrintf("[Res] HTTP %d\n", code);
-    logLine(String("[Res] HTTP ") + code);
+    // logLine(String("[Res] HTTP ") + code);
     M5Cardputer.Display.println("Resolution setup failed!");
     http.end();
     return false;
@@ -421,8 +433,42 @@ bool setCameraResolution(int resolution) {
   
   http.end();
   serialPrintf("Camera resolution set to %d successfully\n", resolution);
-  logLine("Camera resolution set successfully");
+  // logLine("Camera resolution set successfully");
   M5Cardputer.Display.println("Camera resolution set!");
+  return true;
+}
+
+// 设置相机质量
+bool setCameraQuality(int quality) {
+  // 在屏幕上显示相机质量设置信息
+  M5Cardputer.Display.setCursor(10, 130);
+  M5Cardputer.Display.printf("Setting camera quality to %d...\n", quality);
+  Serial.printf("Setting camera quality to %d...\n", quality);
+  
+  HTTPClient http;
+  String url = String("http://192.168.4.1/api/v1/control?var=quality&val=") + quality;
+  
+  http.begin(url);
+  // 使用与Python代码一致的最小化请求头
+  http.addHeader("User-Agent", "M5Cardputer");
+  
+  int code = http.GET();
+  logHttpResponseHeaders("qual", code, http);
+  
+  M5Cardputer.Display.setCursor(10, 145);
+  
+  if (code != 200) {
+    serialPrintf("[Qual] HTTP %d\n", code);
+    // logLine(String("[Qual] HTTP ") + code);
+    M5Cardputer.Display.println("Quality setup failed!");
+    http.end();
+    return false;
+  }
+  
+  http.end();
+  serialPrintf("Camera quality set to %d successfully\n", quality);
+  // logLine("Camera quality set successfully");
+  M5Cardputer.Display.println("Camera quality set!");
   return true;
 }
 
@@ -452,20 +498,26 @@ bool initWiFi() {
   M5Cardputer.Display.setCursor(10, 70);
   
   if (WiFi.status() != WL_CONNECTED) {
-    logLine("WiFi connect failed");
+    // logLine("WiFi connect failed");
     M5Cardputer.Display.println("WiFi connect failed!");
     return false;
   }
   
   String ipStr = WiFi.localIP().toString();
-  logLine(String("WiFi connected: ") + ipStr);
+  // logLine(String("WiFi connected: ") + ipStr);
   M5Cardputer.Display.println("WiFi connected!");
   M5Cardputer.Display.setCursor(10, 85);
   M5Cardputer.Display.println("IP: " + ipStr);
   
   // WiFi连接成功后设置相机分辨率（默认低分辨率）
   if (!setCameraResolution(CAMERA_RESOLUTION_LOW)) {
-    logLine("Failed to set camera resolution");
+    // logLine("Failed to set camera resolution");
+    return false;
+  }
+  
+  // 设置相机质量为0（串流模式）
+  if (!setCameraQuality(0)) {
+    // logLine("Failed to set camera quality");
     return false;
   }
   
@@ -480,7 +532,7 @@ void loop() {
   if (M5Cardputer.Keyboard.isChange()) {
     M5Cardputer.Keyboard.updateKeysState();
     if (M5Cardputer.Keyboard.isKeyPressed('r')) {
-      logLine("User requested device restart");
+      // logLine("User requested device restart");
       M5Cardputer.Display.fillScreen(BLACK);
       M5Cardputer.Display.setCursor(10, 30);
       M5Cardputer.Display.setTextSize(2);
@@ -498,13 +550,13 @@ void loop() {
   // 处理拍摄请求
   if (appState.isCaptureReq) {
     appState.isCaptureReq = false;
-    logLine("Processing capture request...");
+    // logLine("Processing capture request...");
     if (captureSnapshot()) {
-      logLine("Capture successful");
+      // logLine("Capture successful");
       
       // 保存照片到SD卡
       if (isSDInitialized) {
-        logLine("Saving photo to SD card...");
+        // logLine("Saving photo to SD card...");
         
         // 创建带时间戳的文件名
         time_t now = time(nullptr);
@@ -517,26 +569,26 @@ void loop() {
         // 打开文件进行写入
         File file = SD.open(filename, FILE_WRITE);
         if (!file) {
-          logLine("Failed to open file");
+          // logLine("Failed to open file");
         } else {
           // 写入JPEG数据
           size_t bytesWritten = file.write(appState.jpegData, appState.jpegDataSize);
           if (bytesWritten != appState.jpegDataSize) {
-            logLine("Failed to write to file");
+            // logLine("Failed to write to file");
           } else {
-            logLine(String("Photo saved successfully: ") + filename);
+            // logLine(String("Photo saved successfully: ") + filename);
             M5Cardputer.Display.setCursor(10, 10);
             M5Cardputer.Display.println(String("Photo saved: ") + filename);
           }
           file.close();
         }
       } else {
-        logLine("SD card not initialized, cannot save photo");
+        // logLine("SD card not initialized, cannot save photo");
         M5Cardputer.Display.setCursor(10, 10);
         M5Cardputer.Display.println("SD card not initialized");
       }
     } else {
-      logLine("Capture failed");
+      // logLine("Capture failed");
     }
   }
   
@@ -548,7 +600,7 @@ void loop() {
         streamHttp.end();
         streamClient.stop();
         
-        logLine("Connecting to MJPEG stream...");
+        // logLine("Connecting to MJPEG stream...");
         String url = "http://192.168.4.1/api/v1/stream";
         streamHttp.begin(streamClient, url);
         streamHttp.addHeader("User-Agent", "M5Cardputer");
@@ -556,13 +608,13 @@ void loop() {
         
         int code = streamHttp.GET();
         if (code != 200) {
-          logLine(String("Failed to connect to MJPEG stream: HTTP ") + code);
+          // logLine(String("Failed to connect to MJPEG stream: HTTP ") + code);
           streamHttp.end();
           delay(2000);
           return;
         }
         
-        logLine("MJPEG stream connected successfully");
+        // logLine("MJPEG stream connected successfully");
       }
     } else {
       // 处理流数据
@@ -578,7 +630,7 @@ void loop() {
     static unsigned long lastWifiCheck = 0;
     if (millis() - lastWifiCheck > 5000) {
       lastWifiCheck = millis();
-      logLine("WiFi disconnected, waiting for network recovery...");
+      // logLine("WiFi disconnected, waiting for network recovery...");
     }
   }
   
@@ -616,7 +668,7 @@ void loop() {
     appState.jpegReady = false;
   }
   
-  delay(10);
+  //delay(10);
 }
 
 // 主函数
@@ -630,7 +682,7 @@ void setup() {
   initHardware();
   
   if (!initWiFi()) {
-    logLine("WiFi initialization failed");
+    // logLine("WiFi initialization failed");
     M5Cardputer.Display.setCursor(10, 30);
     M5Cardputer.Display.setTextSize(2);
     M5Cardputer.Display.println("WiFi connect failed");
@@ -638,7 +690,7 @@ void setup() {
     M5Cardputer.Display.println("please check network config");
     M5Cardputer.Display.println("press R to restart");
   } else {
-    logLine("Camera application initialized successfully");
+    // logLine("Camera application initialized successfully");
     
     // 显示初始化完成信息
     M5Cardputer.Display.setCursor(10, 130);

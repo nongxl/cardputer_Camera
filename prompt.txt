@@ -295,3 +295,15 @@ UnitCamS3-5MP支持的分辨率参数：
 24 JPEG data too large
 25 JPEG data too large
 26 JPEG data too large
+
+尝试以下优化：
+在 SOI 前强制清空状态。
+在 MJPEG 流解析中，
+一旦检测到 SOI（0xFF 0xD8），
+无条件清空当前帧状态、
+jpegIndex = 0、
+丢弃 SOI 之前的所有字节、
+不尝试保留 SOI 之前的任何数据。
+目标是确保 jpegBuffer[0] 一定是 0xFF、
+jpegBuffer[1] 一定是 0xD8。
+这是为了避免 HTTP header / boundary 污染 JPEG 数据
