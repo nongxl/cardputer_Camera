@@ -12,8 +12,8 @@
 #define GLOBAL_MAX_JPEG_SIZE 70 * 1024 // 65KB最大JPEG尺寸，进一步减小以节省内存
 
 // 相机分辨率常量
-#define CAMERA_RESOLUTION_HIGH 13     // 高分辨率 (1280*720)，用于拍摄照片
-#define CAMERA_RESOLUTION_LOW 6       // 低分辨率(320*240)，用于实时预览
+#define CAMERA_RESOLUTION_HIGH 13     // 13高分辨率 (1280*720)，用于拍摄照片
+#define CAMERA_RESOLUTION_LOW 6       // 6低分辨率(320*240)，用于实时预览
 
 // 日志相关定义
 const char* LOG_HDR_KEYS[] = {"Server", "Content-Type", "Content-Length", "Cache-Control", "Connection"};
@@ -117,6 +117,9 @@ bool setCameraResolution(int resolution);
 
 // setCameraQuality函数的前向声明
 bool setCameraQuality(int quality);
+
+// setCameraSpecialEffect函数的前向声明
+bool setCameraSpecialEffect(int effect);
 
 // 提取完整的JPEG帧（从SOI到EOI）
 static size_t trimToEOI(uint8_t* data, size_t size) {
@@ -472,6 +475,40 @@ bool setCameraQuality(int quality) {
   return true;
 }
 
+// 设置相机特效
+bool setCameraSpecialEffect(int effect) {
+  // 在屏幕上显示相机特效设置信息
+  M5Cardputer.Display.setCursor(10, 160);
+  M5Cardputer.Display.printf("Setting camera effect to %d...\n", effect);
+  Serial.printf("Setting camera effect to %d...\n", effect);
+  
+  HTTPClient http;
+  String url = String("http://192.168.4.1/api/v1/control?var=special_effect&val=") + effect;
+  
+  http.begin(url);
+  // 使用与Python代码一致的最小化请求头
+  http.addHeader("User-Agent", "M5Cardputer");
+  
+  int code = http.GET();
+  logHttpResponseHeaders("effect", code, http);
+  
+  M5Cardputer.Display.setCursor(10, 175);
+  
+  if (code != 200) {
+    serialPrintf("[Effect] HTTP %d\n", code);
+    // logLine(String("[Effect] HTTP ") + code);
+    M5Cardputer.Display.println("Effect setup failed!");
+    http.end();
+    return false;
+  }
+  
+  http.end();
+  serialPrintf("Camera effect set to %d successfully\n", effect);
+  // logLine("Camera effect set successfully");
+  M5Cardputer.Display.println("Camera effect set!");
+  return true;
+}
+
 // 初始化WiFi
 bool initWiFi() {
   // 在屏幕上显示WiFi连接信息
@@ -539,6 +576,15 @@ void loop() {
       M5Cardputer.Display.println("Restarting device...");
       delay(1000);
       ESP.restart();
+    }
+    
+    // 处理数字键0-6，设置相机特效
+    for (int i = 0; i <= 6; i++) {
+      char key = '0' + i;
+      if (M5Cardputer.Keyboard.isKeyPressed(key)) {
+        setCameraSpecialEffect(i);
+        break;
+      }
     }
   }
   

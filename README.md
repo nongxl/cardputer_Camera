@@ -55,6 +55,7 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 5. The application will automatically connect to the camera module
 6. View the live stream on the screen
 7. Press BtnA to capture photos (saved to SD card)
+8. Press 0-6 number to set special effect filter
 
 1. 将M5Cardputer连接到电脑
 2. 使用PlatformIO构建并上传项目
@@ -63,6 +64,7 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 5. 应用将自动连接到相机模块
 6. 在屏幕上查看实时串流画面
 7. 按下BtnA按钮拍摄照片（保存到SD卡）
+8. 按数字0-6设置特效滤镜
 
 ## Configuration
 ## 配置选项
