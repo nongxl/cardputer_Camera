@@ -41,6 +41,21 @@ AppState appState = {
 // SD卡状态全局变量
 bool isSDInitialized = false;
 
+// 相机参数状态全局变量
+int currentBrightness = 0;
+int currentContrast = 0;
+int currentSaturation = 0;
+int currentSharpness = 0;
+
+// 屏幕显示状态
+int currentDisplayLine = 0;
+bool isShowingStatus = false;
+int statusScrollOffset = 0;
+
+// 按键防抖动变量
+unsigned long lastKeyPressTime = 0;
+const unsigned long keyDebounceDelay = 200; // 按键防抖动延迟200ms
+
 // 全局MJPEG流变量
 WiFiClient streamClient;
 HTTPClient streamHttp;
@@ -120,6 +135,21 @@ bool setCameraQuality(int quality);
 
 // setCameraSpecialEffect函数的前向声明
 bool setCameraSpecialEffect(int effect);
+
+// getCameraConfig函数的前向声明
+bool getCameraConfig();
+
+// setCameraParameter函数的前向声明
+bool setCameraParameter(const String& paramName, int value);
+
+// displayLine函数的前向声明
+void displayLine(const String& text);
+
+// showStatusFile函数的前向声明
+void showStatusFile();
+
+// loadCameraStatus函数的前向声明
+bool loadCameraStatus();
 
 // 提取完整的JPEG帧（从SOI到EOI）
 static size_t trimToEOI(uint8_t* data, size_t size) {
@@ -444,8 +474,7 @@ bool setCameraResolution(int resolution) {
 // 设置相机质量
 bool setCameraQuality(int quality) {
   // 在屏幕上显示相机质量设置信息
-  M5Cardputer.Display.setCursor(10, 130);
-  M5Cardputer.Display.printf("Setting camera quality to %d...\n", quality);
+  displayLine(String("Setting quality to ") + quality + "...");
   Serial.printf("Setting camera quality to %d...\n", quality);
   
   HTTPClient http;
@@ -458,12 +487,10 @@ bool setCameraQuality(int quality) {
   int code = http.GET();
   logHttpResponseHeaders("qual", code, http);
   
-  M5Cardputer.Display.setCursor(10, 145);
-  
   if (code != 200) {
     serialPrintf("[Qual] HTTP %d\n", code);
     // logLine(String("[Qual] HTTP ") + code);
-    M5Cardputer.Display.println("Quality setup failed!");
+    displayLine("Quality setup failed!");
     http.end();
     return false;
   }
@@ -471,15 +498,14 @@ bool setCameraQuality(int quality) {
   http.end();
   serialPrintf("Camera quality set to %d successfully\n", quality);
   // logLine("Camera quality set successfully");
-  M5Cardputer.Display.println("Camera quality set!");
+  displayLine("Camera quality set!");
   return true;
 }
 
 // 设置相机特效
 bool setCameraSpecialEffect(int effect) {
   // 在屏幕上显示相机特效设置信息
-  M5Cardputer.Display.setCursor(10, 160);
-  M5Cardputer.Display.printf("Setting camera effect to %d...\n", effect);
+  displayLine(String("Setting effect to ") + effect + "...");
   Serial.printf("Setting camera effect to %d...\n", effect);
   
   HTTPClient http;
@@ -492,12 +518,10 @@ bool setCameraSpecialEffect(int effect) {
   int code = http.GET();
   logHttpResponseHeaders("effect", code, http);
   
-  M5Cardputer.Display.setCursor(10, 175);
-  
   if (code != 200) {
     serialPrintf("[Effect] HTTP %d\n", code);
     // logLine(String("[Effect] HTTP ") + code);
-    M5Cardputer.Display.println("Effect setup failed!");
+    displayLine("Effect setup failed!");
     http.end();
     return false;
   }
@@ -505,15 +529,421 @@ bool setCameraSpecialEffect(int effect) {
   http.end();
   serialPrintf("Camera effect set to %d successfully\n", effect);
   // logLine("Camera effect set successfully");
-  M5Cardputer.Display.println("Camera effect set!");
+  displayLine("Camera effect set!");
   return true;
+}
+
+// 获取相机配置并保存到SD卡
+bool getCameraConfig() {
+  // 在屏幕上显示获取配置信息
+  displayLine("Getting camera status...");
+  Serial.println("Getting camera status...");
+  
+  HTTPClient http;
+  String url = "http://192.168.4.1/api/v1/status";
+  
+  http.begin(url);
+  http.addHeader("User-Agent", "M5Cardputer");
+  http.setTimeout(15000);
+  
+  int code = http.GET();
+  logHttpResponseHeaders("status", code, http);
+  
+  if (code != 200) {
+    serialPrintf("[Config] HTTP %d\n", code);
+    displayLine("Failed to get status!");
+    http.end();
+    return false;
+  }
+  
+  // 获取响应数据长度
+  int contentLength = http.getSize();
+  serialPrintf("Content length: %d bytes\n", contentLength);
+  
+  // 获取响应数据
+  String statusData = http.getString();
+  http.end();
+  
+  // 调试：打印从摄像头获取的原始状态数据
+  Serial.printf("Raw status data length: %d\n", statusData.length());
+  Serial.printf("Raw status data from camera: %s\n", statusData.c_str());
+  
+  // 检查是否真的从摄像头获取了新数据
+  if (statusData.length() == 0) {
+    serialPrintf("ERROR: No data received from camera!\n");
+    displayLine("No data received!");
+    return false;
+  }
+  
+  // 检查SD卡是否已初始化
+  if (!isSDInitialized) {
+    serialPrintf("SD card not initialized, cannot save status\n");
+    displayLine("SD not initialized!");
+    return false;
+  }
+  
+  // 创建/images目录（如果不存在）
+  if (!SD.exists("/images")) {
+    SD.mkdir("/images");
+  }
+  
+  // 保存配置到SD卡
+  File statusFile = SD.open("/images/status.txt", FILE_WRITE);
+  if (!statusFile) {
+    serialPrintf("Failed to open status file\n");
+    displayLine("Failed to open file!");
+    return false;
+  }
+  
+  size_t bytesWritten = statusFile.print(statusData);
+  statusFile.close();
+  
+  if (bytesWritten != statusData.length()) {
+    serialPrintf("Failed to write status data\n");
+    displayLine("Failed to write!");
+    return false;
+  }
+  
+  serialPrintf("Camera status saved to /images/status.txt\n");
+  displayLine("Config saved!");
+  
+  // 加载状态到全局变量
+  loadCameraStatus();
+  
+  return true;
+}
+
+// 从SD卡加载相机状态并更新全局变量
+bool loadCameraStatus() {
+  // 检查SD卡是否已初始化
+  if (!isSDInitialized) {
+    serialPrintf("SD card not initialized, cannot load status\n");
+    return false;
+  }
+  
+  // 读取status.txt文件
+  File statusFile = SD.open("/images/status.txt", FILE_READ);
+  if (!statusFile) {
+    serialPrintf("Failed to open status.txt for reading\n");
+    return false;
+  }
+  
+  String statusData = statusFile.readString();
+  statusFile.close();
+  
+  if (statusData.length() == 0) {
+    serialPrintf("status.txt is empty\n");
+    return false;
+  }
+  
+  // 解析JSON数据，提取参数值
+  // 格式: {"framesize":6,"quality":0,"brightness":0,"contrast":0,"saturation":0,"sharpness":0,...}
+  
+  int brightnessPos = statusData.indexOf("\"brightness\":");
+  if (brightnessPos != -1) {
+    int valueStart = brightnessPos + 13; // 跳过"brightness":
+    int valueEnd = statusData.indexOf(',', valueStart);
+    if (valueEnd == -1) {
+      valueEnd = statusData.indexOf('}', valueStart);
+    }
+    if (valueEnd != -1) {
+      String valueStr = statusData.substring(valueStart, valueEnd);
+      currentBrightness = valueStr.toInt();
+      serialPrintf("Loaded brightness: %d\n", currentBrightness);
+    }
+  }
+  
+  int contrastPos = statusData.indexOf("\"contrast\":");
+  if (contrastPos != -1) {
+    int valueStart = contrastPos + 11; // 跳过"contrast":
+    int valueEnd = statusData.indexOf(',', valueStart);
+    if (valueEnd == -1) {
+      valueEnd = statusData.indexOf('}', valueStart);
+    }
+    if (valueEnd != -1) {
+      String valueStr = statusData.substring(valueStart, valueEnd);
+      currentContrast = valueStr.toInt();
+      serialPrintf("Loaded contrast: %d\n", currentContrast);
+    }
+  }
+  
+  int saturationPos = statusData.indexOf("\"saturation\":");
+  if (saturationPos != -1) {
+    int valueStart = saturationPos + 14; // 跳过"saturation":
+    int valueEnd = statusData.indexOf(',', valueStart);
+    if (valueEnd == -1) {
+      valueEnd = statusData.indexOf('}', valueStart);
+    }
+    if (valueEnd != -1) {
+      String valueStr = statusData.substring(valueStart, valueEnd);
+      currentSaturation = valueStr.toInt();
+      serialPrintf("Loaded saturation: %d\n", currentSaturation);
+    }
+  }
+  
+  int sharpnessPos = statusData.indexOf("\"sharpness\":");
+  if (sharpnessPos != -1) {
+    int valueStart = sharpnessPos + 12; // 跳过"sharpness":
+    int valueEnd = statusData.indexOf(',', valueStart);
+    if (valueEnd == -1) {
+      valueEnd = statusData.indexOf('}', valueStart);
+    }
+    if (valueEnd != -1) {
+      String valueStr = statusData.substring(valueStart, valueEnd);
+      currentSharpness = valueStr.toInt();
+      serialPrintf("Loaded sharpness: %d\n", currentSharpness);
+    }
+  }
+  
+  serialPrintf("Camera status loaded successfully\n");
+  return true;
+}
+
+// 通用的设置相机参数函数
+bool setCameraParameter(const String& paramName, int value) {
+  // 在屏幕上显示参数设置信息
+  M5Cardputer.Display.setCursor(10, 205);
+  M5Cardputer.Display.printf("Setting %s to %d...\n", paramName.c_str(), value);
+  Serial.printf("Setting %s to %d...\n", paramName.c_str(), value);
+  
+  HTTPClient http;
+  String url = String("http://192.168.4.1/api/v1/control?var=") + paramName + "&val=" + value;
+  
+  http.begin(url);
+  http.addHeader("User-Agent", "M5Cardputer");
+  http.setTimeout(10000);
+  
+  int code = http.GET();
+  logHttpResponseHeaders("param", code, http);
+  
+  // 调试：打印HTTP响应内容长度和内容
+  int contentLength = http.getSize();
+  Serial.printf("HTTP Content length for %s: %d bytes\n", paramName.c_str(), contentLength);
+  
+  String response = http.getString();
+  Serial.printf("HTTP Response length for %s: %d bytes\n", paramName.c_str(), response.length());
+  Serial.printf("HTTP Response for %s: %s\n", paramName.c_str(), response.c_str());
+  
+  M5Cardputer.Display.setCursor(10, 220);
+  
+  if (code != 200) {
+    serialPrintf("[%s] HTTP %d\n", paramName.c_str(), code);
+    M5Cardputer.Display.println("Param setup failed!");
+    http.end();
+    return false;
+  }
+  
+  http.end();
+  serialPrintf("%s set to %d successfully\n", paramName.c_str(), value);
+  M5Cardputer.Display.println("Param set!");
+  
+  // 更新对应的全局变量
+  if (paramName == "brightness") {
+    currentBrightness = value;
+    Serial.printf("Updated currentBrightness to %d\n", currentBrightness);
+  } else if (paramName == "contrast") {
+    currentContrast = value;
+    Serial.printf("Updated currentContrast to %d\n", currentContrast);
+  } else if (paramName == "saturation") {
+    currentSaturation = value;
+    Serial.printf("Updated currentSaturation to %d\n", currentSaturation);
+  } else if (paramName == "sharpness") {
+    currentSharpness = value;
+    Serial.printf("Updated currentSharpness to %d\n", currentSharpness);
+  }
+  
+  return true;
+}
+
+// 显示文本行（支持滚动）
+void displayLine(const String& text) {
+  int lineHeight = 12;
+  int maxLines = 20;
+  
+  if (currentDisplayLine >= maxLines) {
+    // 清空屏幕并重置
+    M5Cardputer.Display.fillScreen(BLACK);
+    currentDisplayLine = 0;
+  }
+  
+  M5Cardputer.Display.setCursor(10, 10 + currentDisplayLine * lineHeight);
+  M5Cardputer.Display.println(text);
+  currentDisplayLine++;
+}
+
+// 显示status.txt内容
+void showStatusFile() {
+  // 先重新获取最新配置并保存到SD卡
+  getCameraConfig();
+  
+  // 从SD卡加载相机状态并更新全局变量
+  loadCameraStatus();
+  
+  if (!isSDInitialized) {
+    M5Cardputer.Display.fillScreen(BLACK);
+    M5Cardputer.Display.setCursor(10, 10);
+    M5Cardputer.Display.println("SD card not initialized!");
+    delay(2000);
+    return;
+  }
+  
+  // 停止视频流
+  if (streamClient.connected()) {
+    streamClient.stop();
+  }
+  if (streamHttp.connected()) {
+    streamHttp.end();
+  }
+  
+  File statusFile = SD.open("/images/status.txt", FILE_READ);
+  if (!statusFile) {
+    M5Cardputer.Display.fillScreen(BLACK);
+    M5Cardputer.Display.setCursor(10, 10);
+    M5Cardputer.Display.println("Failed to open status.txt!");
+    delay(2000);
+    return;
+  }
+  
+  // 读取文件内容
+  String statusData = statusFile.readString();
+  statusFile.close();
+  
+  // 解析JSON数据
+  statusData.replace("{", "");
+  statusData.replace("}", "");
+  statusData.replace("\"", "");
+  
+  // 按逗号分割
+  int start = 0;
+  int end = statusData.indexOf(',');
+  String lines[30];
+  int lineCount = 0;
+  
+  while (end != -1 && lineCount < 30) {
+    lines[lineCount] = statusData.substring(start, end);
+    lineCount++;
+    start = end + 1;
+    end = statusData.indexOf(',', start);
+  }
+  
+  // 添加最后一个参数
+  if (start < statusData.length() && lineCount < 30) {
+    lines[lineCount] = statusData.substring(start);
+    lineCount++;
+  }
+  
+  // 添加按键提示
+  String keyHints[10];
+  int hintCount = 0;
+  
+  for (int i = 0; i < lineCount; i++) {
+    String param = lines[i];
+    int colonPos = param.indexOf(':');
+    if (colonPos != -1) {
+      String paramName = param.substring(0, colonPos);
+      String paramValue = param.substring(colonPos + 1);
+      
+      String hint = "";
+      if (paramName == "brightness") {
+        hint = " [;/.]";
+      } else if (paramName == "contrast") {
+        hint = " [,/]";
+      } else if (paramName == "saturation") {
+        hint = " [[]]";
+      } else if (paramName == "sharpness") {
+        hint = " [_/=]";
+      } else if (paramName == "special_effect") {
+        hint = " [0-6]";
+      }
+      
+      if (hint.length() > 0) {
+        keyHints[hintCount] = paramName + ": " + paramValue + hint;
+        hintCount++;
+      }
+    }
+  }
+  
+  // 显示状态信息
+  isShowingStatus = true;
+  statusScrollOffset = 0;
+  
+  while (isShowingStatus) {
+    M5Cardputer.update();
+    M5Cardputer.Display.fillScreen(BLACK);
+    
+    int lineHeight = 12;
+    int maxLines = 20;
+    int displayLine = 0;
+    
+    // 显示标题
+    M5Cardputer.Display.setCursor(10, 10);
+    M5Cardputer.Display.println("Camera Status (ESC to exit)");
+    displayLine++;
+    
+    // 显示参数
+    for (int i = statusScrollOffset; i < lineCount && displayLine < maxLines; i++) {
+      M5Cardputer.Display.setCursor(10, 10 + displayLine * lineHeight);
+      M5Cardputer.Display.println(lines[i]);
+      displayLine++;
+    }
+    
+    // 显示按键提示
+    displayLine++;
+    M5Cardputer.Display.setCursor(10, 10 + displayLine * lineHeight);
+    M5Cardputer.Display.println("--- Key Hints ---");
+    displayLine++;
+    
+    for (int i = 0; i < hintCount && displayLine < maxLines; i++) {
+      M5Cardputer.Display.setCursor(10, 10 + displayLine * lineHeight);
+      M5Cardputer.Display.println(keyHints[i]);
+      displayLine++;
+    }
+    
+    // 显示滚动提示
+    if (lineCount > maxLines - 5) {
+      M5Cardputer.Display.setCursor(10, 10 + (maxLines - 1) * lineHeight);
+      M5Cardputer.Display.printf("Use UP/DOWN to scroll (%d/%d)", statusScrollOffset + 1, lineCount - maxLines + 6);
+    }
+    
+    delay(100);
+    
+    // 检查按键
+    if (M5Cardputer.Keyboard.isChange()) {
+      M5Cardputer.Keyboard.updateKeysState();
+      
+      // ESC键退出
+      if (M5Cardputer.Keyboard.isKeyPressed('`')) {
+        isShowingStatus = false;
+      }
+      
+      // 上键滚动
+      if (M5Cardputer.Keyboard.isKeyPressed(';')) {
+        if (statusScrollOffset > 0) {
+          statusScrollOffset--;
+        }
+      }
+      
+      // 下键滚动
+      if (M5Cardputer.Keyboard.isKeyPressed('.')) {
+        if (statusScrollOffset < lineCount - maxLines + 6) {
+          statusScrollOffset++;
+        }
+      }
+    }
+  }
+  
+  // 退出后清空屏幕并重启视频流
+  M5Cardputer.Display.fillScreen(BLACK);
+  currentDisplayLine = 0;
+  
+  // 标记需要重启视频流
+  appState.isRestartStream = true;
 }
 
 // 初始化WiFi
 bool initWiFi() {
   // 在屏幕上显示WiFi连接信息
-  M5Cardputer.Display.setCursor(10, 40);
-  M5Cardputer.Display.println("Connecting WiFi...");
+  displayLine("Connecting WiFi...");
   Serial.println("Connecting WiFi...");
   
   WiFi.begin("UnitCamS3-WiFi", "");
@@ -525,26 +955,25 @@ bool initWiFi() {
     
     // 在屏幕上显示连接进度
     if (retry % 4 == 0) {
-      M5Cardputer.Display.setCursor(10 + (retry / 4) * 10, 55);
+      M5Cardputer.Display.setCursor(10 + (retry / 4) * 10, 10 + currentDisplayLine * 12);
       M5Cardputer.Display.print(".");
     }
     
     retry++;
   }
   
-  M5Cardputer.Display.setCursor(10, 70);
+  currentDisplayLine++;
   
   if (WiFi.status() != WL_CONNECTED) {
     // logLine("WiFi connect failed");
-    M5Cardputer.Display.println("WiFi connect failed!");
+    displayLine("WiFi connect failed!");
     return false;
   }
   
   String ipStr = WiFi.localIP().toString();
   // logLine(String("WiFi connected: ") + ipStr);
-  M5Cardputer.Display.println("WiFi connected!");
-  M5Cardputer.Display.setCursor(10, 85);
-  M5Cardputer.Display.println("IP: " + ipStr);
+  displayLine("WiFi connected!");
+  displayLine("IP: " + ipStr);
   
   // WiFi连接成功后设置相机分辨率（默认低分辨率）
   if (!setCameraResolution(CAMERA_RESOLUTION_LOW)) {
@@ -558,6 +987,12 @@ bool initWiFi() {
     return false;
   }
   
+  // 获取相机配置并保存到SD卡
+  getCameraConfig();
+  
+  // 从SD卡加载相机状态并更新全局变量
+  loadCameraStatus();
+  
   return true;
 }
 
@@ -568,6 +1003,8 @@ void loop() {
   // 处理用户按键
   if (M5Cardputer.Keyboard.isChange()) {
     M5Cardputer.Keyboard.updateKeysState();
+    
+    // 处理重启键（只在按键变化时触发一次）
     if (M5Cardputer.Keyboard.isKeyPressed('r')) {
       // logLine("User requested device restart");
       M5Cardputer.Display.fillScreen(BLACK);
@@ -578,13 +1015,89 @@ void loop() {
       ESP.restart();
     }
     
-    // 处理数字键0-6，设置相机特效
+    // 处理数字键0-6，设置相机特效（只在按键变化时触发一次）
     for (int i = 0; i <= 6; i++) {
       char key = '0' + i;
       if (M5Cardputer.Keyboard.isKeyPressed(key)) {
         setCameraSpecialEffect(i);
         break;
       }
+    }
+    
+    // 处理显示状态信息（只在按键变化时触发一次）
+    if (M5Cardputer.Keyboard.isKeyPressed('`')) {
+      showStatusFile();
+    }
+  }
+  
+  // 处理参数调节按键（持续检测，带防抖动）
+  unsigned long currentTime = millis();
+  if (currentTime - lastKeyPressTime >= keyDebounceDelay) {
+    bool keyPressed = false;
+    
+    // 处理亮度调节（; 上键增加，. 下键减少）
+    if (M5Cardputer.Keyboard.isKeyPressed(';')) {
+      if (currentBrightness < 2) {
+        currentBrightness++;
+        setCameraParameter("brightness", currentBrightness);
+        keyPressed = true;
+      }
+    } else if (M5Cardputer.Keyboard.isKeyPressed('.')) {
+      if (currentBrightness > -2) {
+        currentBrightness--;
+        setCameraParameter("brightness", currentBrightness);
+        keyPressed = true;
+      }
+    }
+    
+    // 处理对比度调节（, 左键减少，/ 右键增加）
+    if (!keyPressed && M5Cardputer.Keyboard.isKeyPressed(',')) {
+      if (currentContrast > -2) {
+        currentContrast--;
+        setCameraParameter("contrast", currentContrast);
+        keyPressed = true;
+      }
+    } else if (!keyPressed && M5Cardputer.Keyboard.isKeyPressed('/')) {
+      if (currentContrast < 2) {
+        currentContrast++;
+        setCameraParameter("contrast", currentContrast);
+        keyPressed = true;
+      }
+    }
+    
+    // 处理饱和度调节（[ 左中括号减少，] 右中括号增加）
+    if (!keyPressed && M5Cardputer.Keyboard.isKeyPressed('[')) {
+      if (currentSaturation > -2) {
+        currentSaturation--;
+        setCameraParameter("saturation", currentSaturation);
+        keyPressed = true;
+      }
+    } else if (!keyPressed && M5Cardputer.Keyboard.isKeyPressed(']')) {
+      if (currentSaturation < 2) {
+        currentSaturation++;
+        setCameraParameter("saturation", currentSaturation);
+        keyPressed = true;
+      }
+    }
+    
+    // 处理锐度调节（_ 下划线减少，= 等号增加）
+    if (!keyPressed && M5Cardputer.Keyboard.isKeyPressed('_')) {
+      if (currentSharpness > -2) {
+        currentSharpness--;
+        setCameraParameter("sharpness", currentSharpness);
+        keyPressed = true;
+      }
+    } else if (!keyPressed && M5Cardputer.Keyboard.isKeyPressed('=')) {
+      if (currentSharpness < 2) {
+        currentSharpness++;
+        setCameraParameter("sharpness", currentSharpness);
+        keyPressed = true;
+      }
+    }
+    
+    // 如果有按键被按下，更新最后按键时间
+    if (keyPressed) {
+      lastKeyPressTime = currentTime;
     }
   }
   
@@ -733,7 +1246,7 @@ void setup() {
     M5Cardputer.Display.setTextSize(2);
     M5Cardputer.Display.println("WiFi connect failed");
     M5Cardputer.Display.setTextSize(1);
-    M5Cardputer.Display.println("please check network config");
+    M5Cardputer.Display.println("please check network status");
     M5Cardputer.Display.println("press R to restart");
   } else {
     // logLine("Camera application initialized successfully");

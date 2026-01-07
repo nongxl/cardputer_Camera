@@ -55,7 +55,9 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 5. The application will automatically connect to the camera module
 6. View the live stream on the screen
 7. Press BtnA to capture photos (saved to SD card)
-8. Press 0-6 number to set special effect filter
+8. Press 0-6 number keys to set special effect filter
+9. Press ` (backtick) to view camera status and parameter settings
+10. Adjust camera parameters using keyboard:
 
 1. 将M5Cardputer连接到电脑
 2. 使用PlatformIO构建并上传项目
@@ -64,7 +66,21 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 5. 应用将自动连接到相机模块
 6. 在屏幕上查看实时串流画面
 7. 按下BtnA按钮拍摄照片（保存到SD卡）
-8. 按数字0-6设置特效滤镜
+8. 按数字键0-6设置特效滤镜
+9. 按`（反引号）查看相机状态和参数设置
+10. 使用键盘调整相机参数：
+
+### Camera Parameter Controls
+### 相机参数控制
+
+| Parameter | Key (Increase) | Key (Decrease) | Range |
+| 参数 | 增加按键 | 减少按键 | 范围 |
+|-----------|----------------|----------------|-------|
+| Brightness 亮度 | `;` (semicolon) | `.` (period) | -2 to 2 |
+| Contrast 对比度 | `/` (slash) | `,` (comma) | -2 to 2 |
+| Saturation 饱和度 | `]` (right bracket) | `[` (left bracket) | -2 to 2 |
+| Sharpness 锐度 | `=` (equals) | `_` (underscore) | -2 to 2 |
+| Special Effect 特效 | `0-6` (number keys) | - | 0 to 6 |
 
 ## Configuration
 ## 配置选项

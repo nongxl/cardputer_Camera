@@ -307,3 +307,12 @@ jpegIndex = 0、
 目标是确保 jpegBuffer[0] 一定是 0xFF、
 jpegBuffer[1] 一定是 0xD8。
 这是为了避免 HTTP header / boundary 污染 JPEG 数据
+
+status.txt是这样的{"framesize":6,"quality":0,"brightness":0,"contrast":0,"saturation":0,"sharpness":0,"special_effect":0,"wb_mode":0,"awb":0,"awb_gain":0,"aec":0,"aec2":0,"denoise":0,"ae_level":0,"aec_value":0,"agc":0,"agc_gain":0,"gainceiling":0,"bpc":0,"wpc":0,"raw_gma":0,"lenc":0,"hmirror":0,"vflip":0,"dcw":0,"colorbar":0}
+实现和目前按键0-6切换特效一样的功能——按键向摄像头如下接口发送设置：
+接口 GET /api/v1/control?var=参数名&val=参数值 
+- brightness - 亮度(边界值-2到2)  分别按;（分号，上键）和。（句号，下键）实现亮度调节
+- contrast - 对比度(边界值-2到2) 分别按，（逗号，左键）和/（斜杠，右键键）实现对比度调节
+- saturation - 饱和度(边界值-2到2) 分别按[(左中括号)和]（右中括号）实现饱和度调节
+- sharpness - 锐度(边界值-2到2) 分别按_(下划线)和=（等号）实现锐度调节
+需要从/images/status.txt中读取初始值，设置参数后请求- GET /api/v1/status - 获取摄像头当前状态检查是否生效并更新status.txt
