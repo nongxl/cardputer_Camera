@@ -9,10 +9,11 @@
 #include <time.h>
 
 // 全局配置
-#define GLOBAL_MAX_JPEG_SIZE 70 * 1024 // 65KB最大JPEG尺寸，进一步减小以节省内存
+#define GLOBAL_MAX_JPEG_SIZE 70 * 1024 // 70KB最大JPEG尺寸，进一步减小以节省内存
 
 // 相机分辨率常量
 #define CAMERA_RESOLUTION_HIGH 13     // 13高分辨率 (1280*720)，用于拍摄照片
+#define CAMERA_RESOLUTION_TIMELAPSE 17     // 17分辨率 (640*480)，用于延时摄影模式
 #define CAMERA_RESOLUTION_LOW 6       // 6低分辨率(320*240)，用于实时预览
 
 // 日志相关定义
@@ -28,6 +29,11 @@ typedef struct {
   // 使用静态数组代替vector作为JPEG数据缓冲区
   uint8_t jpegData[GLOBAL_MAX_JPEG_SIZE];
   size_t jpegDataSize;
+  
+  // 缓存的图像尺寸（避免每帧都解析）
+  int cachedImgWidth;
+  int cachedImgHeight;
+  bool sizeCached;
 } AppState;
 
 AppState appState = {
@@ -35,8 +41,15 @@ AppState appState = {
   false,                   // isRestartStream
   false,                   // jpegReady
   {0},                     // jpegData
-  0                        // jpegDataSize
+  0,                       // jpegDataSize
+  0,                       // cachedImgWidth
+  0,                       // cachedImgHeight
+  false                    // sizeCached
 };
+
+// 屏幕分辨率常量定义
+const int SCREEN_WIDTH = 240;
+const int SCREEN_HEIGHT = 135;
 
 // SD卡状态全局变量
 bool isSDInitialized = false;
@@ -55,6 +68,16 @@ int statusScrollOffset = 0;
 // 按键防抖动变量
 unsigned long lastKeyPressTime = 0;
 const unsigned long keyDebounceDelay = 200; // 按键防抖动延迟200ms
+
+// Timelapse延时摄影模式相关变量
+bool isTimelapseMode = false;        // 是否处于timelapse模式
+int timelapsePhotoCount = 0;         // 已拍摄照片数量
+unsigned long timelapseLastShotTime = 0; // 上次拍摄时间
+const unsigned long timelapseInterval = 5000; // 拍摄间隔5秒
+unsigned long timelapseStartTime = 0; // timelapse模式启动时间
+bool isScreenOff = false;             // 屏幕是否息屏
+unsigned long lastUserActionTime = 0; // 上次用户操作时间
+const unsigned long screenOffTimeout = 60000; // 1分钟无操作息屏
 
 // 全局MJPEG流变量
 WiFiClient streamClient;
@@ -91,6 +114,7 @@ void logHttpResponseHeaders(const String& prefix, int code, HTTPClient& http) {
 
 // 记录原始串口数据
 void serialPrintf(const char* format, ...) {
+  return;
   char buffer[256];
   va_list args;
   va_start(args, format);
@@ -150,6 +174,27 @@ void showStatusFile();
 
 // loadCameraStatus函数的前向声明
 bool loadCameraStatus();
+
+// createTimelapseDir函数的前向声明
+bool createTimelapseDir();
+
+// getSDCardFreeSpace函数的前向声明
+uint64_t getSDCardFreeSpace();
+
+// getBatteryPercentage函数的前向声明
+int getBatteryPercentage();
+
+// updateTimelapseDisplay函数的前向声明
+void updateTimelapseDisplay();
+
+// startTimelapseMode函数的前向声明
+void startTimelapseMode();
+
+// stopTimelapseMode函数的前向声明
+void stopTimelapseMode();
+
+// captureTimelapsePhoto函数的前向声明
+bool captureTimelapsePhoto();
 
 // 提取完整的JPEG帧（从SOI到EOI）
 static size_t trimToEOI(uint8_t* data, size_t size) {
@@ -468,6 +513,12 @@ bool setCameraResolution(int resolution) {
   serialPrintf("Camera resolution set to %d successfully\n", resolution);
   // logLine("Camera resolution set successfully");
   M5Cardputer.Display.println("Camera resolution set!");
+  
+  // 清除图像尺寸缓存（因为分辨率改变了）
+  appState.sizeCached = false;
+  appState.cachedImgWidth = 0;
+  appState.cachedImgHeight = 0;
+  
   return true;
 }
 
@@ -696,6 +747,322 @@ bool loadCameraStatus() {
   }
   
   serialPrintf("Camera status loaded successfully\n");
+  return true;
+}
+
+// 创建timelapse目录
+bool createTimelapseDir() {
+  if (!isSDInitialized) {
+    serialPrintf("SD card not initialized, cannot create timelapse directory\n");
+    return false;
+  }
+  
+  if (!SD.exists("/images/timelapse")) {
+    if (SD.mkdir("/images/timelapse")) {
+      serialPrintf("Created /images/timelapse directory\n");
+      return true;
+    } else {
+      serialPrintf("Failed to create /images/timelapse directory\n");
+      return false;
+    }
+  }
+  
+  return true;
+}
+
+// 获取SD卡剩余容量（字节）
+uint64_t getSDCardFreeSpace() {
+  if (!isSDInitialized) {
+    return 0;
+  }
+  
+  uint64_t totalBytes = SD.totalBytes();
+  uint64_t usedBytes = SD.usedBytes();
+  uint64_t freeBytes = totalBytes - usedBytes;
+  
+  return freeBytes;
+}
+
+// 获取电池电量百分比
+int getBatteryPercentage() {
+  M5Cardputer.update();
+  
+  float voltage = M5Cardputer.Power.getBatteryVoltage();
+  
+  // 假设电池电压范围：3.0V（0%）到4.2V（100%）
+  float percentage = (voltage - 3.0f) / (4.2f - 3.0f) * 100.0f;
+  
+  if (percentage < 0) percentage = 0;
+  if (percentage > 100) percentage = 100;
+  
+  return (int)percentage;
+}
+
+// 更新timelapse模式显示界面
+void updateTimelapseDisplay() {
+  if (isScreenOff) {
+    return;
+  }
+  
+  M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+  M5Cardputer.Display.setTextSize(1);
+  
+  // 左上角：已拍摄张数和倒计时
+  M5Cardputer.Display.setCursor(5, 5);
+  M5Cardputer.Display.printf("Photos: %d", timelapsePhotoCount);
+  
+  unsigned long timeSinceLastShot = millis() - timelapseLastShotTime;
+  int countdown;
+  
+  if (timeSinceLastShot >= timelapseInterval) {
+    countdown = 0;
+  } else {
+    countdown = (timelapseInterval - timeSinceLastShot) / 1000;
+  }
+  
+  M5Cardputer.Display.setCursor(5, 20);
+  M5Cardputer.Display.printf("Next: %ds", countdown);
+  
+  // 右上角：存储卡剩余容量和电量百分比
+  uint64_t freeSpace = getSDCardFreeSpace();
+  float freeSpaceMB = freeSpace / (1024.0f * 1024.0f);
+  int battery = getBatteryPercentage();
+  
+  String spaceStr = String(freeSpaceMB, 1) + "MB";
+  int spaceStrWidth = M5Cardputer.Display.textWidth(spaceStr);
+  M5Cardputer.Display.setCursor(SCREEN_WIDTH - spaceStrWidth - 5, 5);
+  M5Cardputer.Display.printf("%s", spaceStr.c_str());
+  
+  String batteryStr = String(battery) + "%";
+  int batteryStrWidth = M5Cardputer.Display.textWidth(batteryStr);
+  M5Cardputer.Display.setCursor(SCREEN_WIDTH - batteryStrWidth - 5, 20);
+  M5Cardputer.Display.printf("%s", batteryStr.c_str());
+}
+
+// 启动timelapse模式
+void startTimelapseMode() {
+  serialPrintf("Starting timelapse mode...\n");
+  serialPrintf("isSDInitialized: %d\n", isSDInitialized);
+  
+  // 创建timelapse目录
+  if (!createTimelapseDir()) {
+    serialPrintf("Failed to create timelapse directory\n");
+    
+    // 在屏幕上显示错误提示
+    M5Cardputer.Display.clearDisplay();
+    M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+    M5Cardputer.Display.setTextSize(2);
+    M5Cardputer.Display.setCursor(10, 60);
+    M5Cardputer.Display.println("SD Card Error");
+    M5Cardputer.Display.setTextSize(1);
+    M5Cardputer.Display.setCursor(10, 90);
+    M5Cardputer.Display.println("Please insert SD card");
+    M5Cardputer.Display.setCursor(10, 110);
+    M5Cardputer.Display.println("Press any key to continue");
+    
+    // 等待用户按键
+    while (true) {
+      M5Cardputer.update();
+      if (M5Cardputer.Keyboard.isChange()) {
+        M5Cardputer.Keyboard.updateKeysState();
+        break;
+      }
+      delay(100);
+    }
+    
+    return;
+  }
+  
+  serialPrintf("Timelapse directory created successfully\n");
+  
+  // 停止MJPEG流以防止资源冲突
+  streamHttp.end();
+  streamClient.stop();
+  delay(500);
+  
+  // 设置timelapse分辨率和质量
+  serialPrintf("Setting timelapse resolution...\n");
+  if (!setCameraResolution(CAMERA_RESOLUTION_TIMELAPSE)) {
+    serialPrintf("Failed to set timelapse resolution\n");
+    return;
+  }
+  
+  serialPrintf("Setting high quality...\n");
+  if (!setCameraQuality(2)) {
+    serialPrintf("Failed to set high quality\n");
+    return;
+  }
+  
+  // 初始化timelapse状态
+  isTimelapseMode = true;
+  timelapsePhotoCount = 0;
+  timelapseLastShotTime = millis();
+  timelapseStartTime = millis();
+  lastUserActionTime = millis();
+  isScreenOff = false;
+  
+  serialPrintf("Timelapse state initialized\n");
+  serialPrintf("isTimelapseMode: %d\n", isTimelapseMode);
+  
+  // 清屏
+  M5Cardputer.Display.clearDisplay();
+  M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+  M5Cardputer.Display.setTextSize(2);
+  M5Cardputer.Display.setCursor(10, 60);
+  M5Cardputer.Display.println("Timelapse Mode");
+  M5Cardputer.Display.setTextSize(1);
+  M5Cardputer.Display.setCursor(10, 90);
+  M5Cardputer.Display.println("Power off to stop and reset camera");
+  delay(2000);
+  
+  serialPrintf("Timelapse mode started\n");
+}
+
+// 停止timelapse模式
+void stopTimelapseMode() {
+  serialPrintf("Stopping timelapse mode...\n");
+  
+  isTimelapseMode = false;
+  isScreenOff = false;
+  
+  // 恢复低分辨率和低质量（串流模式）
+  serialPrintf("Restoring low resolution...\n");
+  setCameraResolution(CAMERA_RESOLUTION_LOW);
+  
+  serialPrintf("Restoring low quality...\n");
+  setCameraQuality(0);
+  
+  // 标记需要重启视频流
+  appState.isRestartStream = true;
+  
+  // 清屏
+  M5Cardputer.Display.clearDisplay();
+  M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+  M5Cardputer.Display.setTextSize(2);
+  M5Cardputer.Display.setCursor(10, 60);
+  M5Cardputer.Display.printf("Captured: %d", timelapsePhotoCount);
+  M5Cardputer.Display.setTextSize(1);
+  M5Cardputer.Display.setCursor(10, 90);
+  M5Cardputer.Display.println("Press any key");
+  
+  delay(2000);
+  
+  // 清屏以移除统计信息，准备显示视频流
+  M5Cardputer.Display.clearDisplay();
+  
+  serialPrintf("Timelapse mode stopped. Total photos: %d\n", timelapsePhotoCount);
+}
+
+// 拍摄timelapse照片
+bool captureTimelapsePhoto() {
+  serialPrintf("Capturing timelapse photo %d...\n", timelapsePhotoCount + 1);
+  
+  // 获取最新图像数据
+  HTTPClient http;
+  
+  // 第一次请求：触发拍摄（忽略返回的旧图像数据）
+  const char* captureUrl = "http://192.168.4.1/api/v1/capture";
+  http.begin(captureUrl);
+  http.addHeader("User-Agent", "M5Cardputer");
+  http.setTimeout(15000);
+  
+  serialPrintf("[Timelapse] First request (trigger): GET %s\n", captureUrl);
+  int code = http.GET();
+  
+  // 关闭第一次请求
+  http.end();
+  
+  // 等待相机处理新图像
+  delay(500);
+  
+  // 第二次请求：获取新的图像数据
+  http.begin(captureUrl);
+  http.addHeader("User-Agent", "M5Cardputer");
+  http.setTimeout(15000);
+  
+  serialPrintf("[Timelapse] Second request (fetch): GET %s\n", captureUrl);
+  code = http.GET();
+  
+  if (code != 200) {
+    serialPrintf("[Timelapse] HTTP %d\n", code);
+    http.end();
+    // 即使拍摄失败，也要重置倒计时，避免卡在0秒
+    timelapseLastShotTime = millis();
+    return false;
+  }
+  
+  String ct = http.header("Content-Type");
+  serialPrintf("[Timelapse] CT: %s\n", ct.c_str());
+  
+  // 验证内容类型是否为JPEG，但允许空内容类型（相机API可能不设置它）
+  if (!ct.isEmpty() && !ct.startsWith("image/jpeg")) {
+    serialPrintf("[Timelapse] Unexpected content-type: %s\n", ct.c_str());
+    http.end();
+    timelapseLastShotTime = millis();
+    return false;
+  }
+  
+  // 读取JPEG数据
+  WiFiClient* s = http.getStreamPtr();
+  s->setNoDelay(true);
+  s->setTimeout(10000);
+  int len = http.getSize();
+  
+  serialPrintf("[Timelapse] Content length: %d\n", len);
+  
+  // 生成文件名：IMG_YYYYMMDD_HHMMSS.jpg
+  time_t now;
+  struct tm timeinfo;
+  time(&now);
+  localtime_r(&now, &timeinfo);
+  
+  char filename[64];
+  snprintf(filename, sizeof(filename), "/images/timelapse/IMG_%04d%02d%02d_%02d%02d%02d.jpg",
+           timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+           timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+  
+  // 保存照片到SD卡
+  File photoFile = SD.open(filename, FILE_WRITE);
+  if (!photoFile) {
+    serialPrintf("[Timelapse] Failed to create photo file\n");
+    http.end();
+    // 即使文件创建失败，也要重置倒计时，避免卡在0秒
+    timelapseLastShotTime = millis();
+    return false;
+  }
+  
+  uint8_t* buffer = new uint8_t[1024];
+  size_t totalWritten = 0;
+  
+  while (http.connected() && (len < 0 || totalWritten < (size_t)len)) {
+    size_t available = s->available();
+    if (available > 0) {
+      int readSize = s->readBytes(buffer, min(available, (size_t)1024));
+      photoFile.write(buffer, readSize);
+      totalWritten += readSize;
+    }
+  }
+  
+  delete[] buffer;
+  photoFile.close();
+  http.end();
+  
+  serialPrintf("[Timelapse] Written: %d bytes\n", totalWritten);
+  
+  if (len > 0 && totalWritten != (size_t)len) {
+    serialPrintf("[Timelapse] Incomplete photo: %d/%d bytes\n", totalWritten, len);
+    // 即使数据不完整，也要重置倒计时，避免卡在0秒
+    timelapseLastShotTime = millis();
+    return false;
+  }
+  
+  timelapsePhotoCount++;
+  timelapseLastShotTime = millis();
+  
+  serialPrintf("[Timelapse] Photo saved: %s\n", filename);
+  serialPrintf("[Timelapse] Total photos: %d\n", timelapsePhotoCount);
+  serialPrintf("[Timelapse] Next photo in 5 seconds\n");
+  
   return true;
 }
 
@@ -1000,9 +1367,52 @@ bool initWiFi() {
 void loop() {
   M5Cardputer.update();
   
+  // Timelapse模式处理
+  if (isTimelapseMode) {
+    // 检测任意按键（仅键盘）
+    bool anyKeyPressed = M5Cardputer.Keyboard.isChange();
+    
+    if (anyKeyPressed) {
+      M5Cardputer.Keyboard.updateKeysState();
+      
+      // 如果屏幕熄灭，先点亮屏幕
+      if (isScreenOff) {
+        isScreenOff = false;
+        M5Cardputer.Display.wakeup();
+        lastUserActionTime = millis();
+        updateTimelapseDisplay();
+      } else {
+        // 更新最后操作时间
+        lastUserActionTime = millis();
+      }
+    }
+    
+    // 检查是否需要息屏（1分钟无操作）
+    if (!isScreenOff && millis() - lastUserActionTime >= screenOffTimeout) {
+      isScreenOff = true;
+      M5Cardputer.Display.sleep();
+    }
+    
+    // 更新timelapse显示界面（只在屏幕点亮时）
+    if (!isScreenOff) {
+      updateTimelapseDisplay();
+    }
+    
+    // 检查是否需要拍摄照片（5秒间隔）
+    unsigned long timeSinceLastShot = millis() - timelapseLastShotTime;
+    if (timeSinceLastShot >= timelapseInterval) {
+      serialPrintf("[Timelapse] Time since last shot: %lu ms, triggering capture\n", timeSinceLastShot);
+      captureTimelapsePhoto();
+    }
+    
+    delay(100);
+    return;
+  }
+  
   // 处理用户按键
   if (M5Cardputer.Keyboard.isChange()) {
     M5Cardputer.Keyboard.updateKeysState();
+    serialPrintf("Keyboard state changed\n");
     
     // 处理重启键（只在按键变化时触发一次）
     if (M5Cardputer.Keyboard.isKeyPressed('r')) {
@@ -1013,6 +1423,13 @@ void loop() {
       M5Cardputer.Display.println("Restarting device...");
       delay(1000);
       ESP.restart();
+    }
+    
+    // 处理t键启动timelapse模式
+    if (M5Cardputer.Keyboard.isKeyPressed('t')) {
+      serialPrintf("t key pressed, starting timelapse mode...\n");
+      startTimelapseMode();
+      return;
     }
     
     // 处理数字键0-6，设置相机特效（只在按键变化时触发一次）
@@ -1156,8 +1573,17 @@ void loop() {
     if (!streamClient.connected()) {
       if (appState.isRestartStream || !streamHttp.connected()) {
         appState.isRestartStream = false;
+        
+        // 清除图像尺寸缓存（因为流重启了）
+        appState.sizeCached = false;
+        appState.cachedImgWidth = 0;
+        appState.cachedImgHeight = 0;
+        
         streamHttp.end();
         streamClient.stop();
+        
+        // 等待相机完成分辨率切换
+        delay(500);
         
         // logLine("Connecting to MJPEG stream...");
         String url = "http://192.168.4.1/api/v1/stream";
@@ -1195,33 +1621,44 @@ void loop() {
   
   // 显示JPEG帧
   if (appState.jpegReady) {
-    // 获取JPEG尺寸
     int imgWidth, imgHeight;
-    if (parseJpegSize(appState.jpegData, appState.jpegDataSize, imgWidth, imgHeight)) {
-      // M5Cardputer屏幕分辨率
-      const int screenWidth = 240;
-      const int screenHeight = 135;
-      
-      // 计算显示起始位置（居中显示）
-      int x = 0;
-      int y = 0;
-      
-      // 如果图像宽度大于屏幕宽度，只显示中间部分
-      if (imgWidth > screenWidth) {
-        x = -(imgWidth - screenWidth) / 2;
-      }
-      
-      // 如果图像高度大于屏幕高度，只显示中间部分
-      if (imgHeight > screenHeight) {
-        y = -(imgHeight - screenHeight) / 2;
-      }
-      
-      // 向LCD显示JPEG帧
-      M5Cardputer.Display.drawJpg(appState.jpegData, appState.jpegDataSize, x, y);
+    
+    // 尝试使用缓存的图像尺寸
+    if (appState.sizeCached) {
+      imgWidth = appState.cachedImgWidth;
+      imgHeight = appState.cachedImgHeight;
     } else {
-      // 如果无法解析尺寸，默认显示左上角
-      M5Cardputer.Display.drawJpg(appState.jpegData, appState.jpegDataSize, 0, 0);
+      // 解析JPEG尺寸
+      if (parseJpegSize(appState.jpegData, appState.jpegDataSize, imgWidth, imgHeight)) {
+        // 缓存图像尺寸
+        appState.cachedImgWidth = imgWidth;
+        appState.cachedImgHeight = imgHeight;
+        appState.sizeCached = true;
+      } else {
+        // 如果无法解析尺寸，默认显示左上角
+        M5Cardputer.Display.drawJpg(appState.jpegData, appState.jpegDataSize, 0, 0);
+        appState.jpegReady = false;
+        return;
+      }
     }
+    
+    // 计算显示起始位置（居中显示）
+    int x = 0;
+    int y = 0;
+    
+    // 如果图像宽度小于屏幕宽度，居中显示
+    if (imgWidth < SCREEN_WIDTH) {
+      x = (SCREEN_WIDTH - imgWidth) / 2;
+    }
+    
+    // 如果图像高度小于屏幕高度，居中显示
+    if (imgHeight < SCREEN_HEIGHT) {
+      y = (SCREEN_HEIGHT - imgHeight) / 2;
+    }
+    
+    // 向LCD显示JPEG帧
+    // 注意：如果图像大于屏幕，drawJpg会自动裁切显示左上角部分
+    M5Cardputer.Display.drawJpg(appState.jpegData, appState.jpegDataSize, x, y);
     
     // 显示后重置就绪标志
     appState.jpegReady = false;

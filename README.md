@@ -82,6 +82,23 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 | Sharpness 锐度 | `=` (equals) | `_` (underscore) | -2 to 2 |
 | Special Effect 特效 | `0-6` (number keys) | - | 0 to 6 |
 
+### Timelapse Mode
+### 延时摄影模式
+
+- Press `t` key to start timelapse mode
+- Photos are automatically taken every 5 seconds
+- Photos are saved to `/images/timelapse` directory
+- Display shows photo count, countdown, remaining storage, and battery
+- Screen turns off after 1 minute of inactivity (press any key to wake)
+- Power off the device to exit timelapse mode and reset camera module
+
+- 按`t`键启动延时摄影模式
+- 每5秒自动拍摄一张照片
+- 照片保存到`/images/timelapse`目录
+- 屏幕显示照片数量、倒计时、剩余存储空间和电量
+- 1分钟无操作后屏幕自动熄灭（按任意键唤醒）
+- 关闭设备电源退出延时摄影模式并重置摄像头模块
+
 ## Configuration
 ## 配置选项
 
