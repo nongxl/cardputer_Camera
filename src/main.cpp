@@ -13,7 +13,7 @@
 
 // 相机分辨率常量
 #define CAMERA_RESOLUTION_HIGH 13     // 13高分辨率 (1280*720)，用于拍摄照片
-#define CAMERA_RESOLUTION_TIMELAPSE 17     // 17分辨率 (640*480)，用于延时摄影模式
+#define CAMERA_RESOLUTION_TIMELAPSE 10     // 10分辨率 (640*480)，用于延时摄影模式
 #define CAMERA_RESOLUTION_LOW 6       // 6低分辨率(320*240)，用于实时预览
 
 // 日志相关定义
@@ -72,12 +72,14 @@ const unsigned long keyDebounceDelay = 200; // 按键防抖动延迟200ms
 // Timelapse延时摄影模式相关变量
 bool isTimelapseMode = false;        // 是否处于timelapse模式
 int timelapsePhotoCount = 0;         // 已拍摄照片数量
+int currentTimelapseSession = 0;     // 当前timelapse会话编号
 unsigned long timelapseLastShotTime = 0; // 上次拍摄时间
 const unsigned long timelapseInterval = 5000; // 拍摄间隔5秒
 unsigned long timelapseStartTime = 0; // timelapse模式启动时间
 bool isScreenOff = false;             // 屏幕是否息屏
 unsigned long lastUserActionTime = 0; // 上次用户操作时间
 const unsigned long screenOffTimeout = 60000; // 1分钟无操作息屏
+String currentTimelapseDir = "";      // 当前timelapse会话的目录路径
 
 // 全局MJPEG流变量
 WiFiClient streamClient;
@@ -757,16 +759,53 @@ bool createTimelapseDir() {
     return false;
   }
   
+  // 创建/images/timelapse主目录
   if (!SD.exists("/images/timelapse")) {
-    if (SD.mkdir("/images/timelapse")) {
-      serialPrintf("Created /images/timelapse directory\n");
-      return true;
-    } else {
+    if (!SD.mkdir("/images/timelapse")) {
       serialPrintf("Failed to create /images/timelapse directory\n");
       return false;
     }
   }
   
+  // 查找最大的会话编号
+  int maxSession = -1;
+  File root = SD.open("/images/timelapse");
+  if (root) {
+    File file = root.openNextFile();
+    while (file) {
+      if (!file.isDirectory()) {
+        file = root.openNextFile();
+        continue;
+      }
+      
+      String dirName = file.name();
+      // 提取数字编号
+      int sessionNum = dirName.toInt();
+      if (sessionNum > maxSession) {
+        maxSession = sessionNum;
+      }
+      
+      file = root.openNextFile();
+    }
+    root.close();
+  }
+  
+  // 新会话编号为最大编号+1，如果为空则为0
+  currentTimelapseSession = maxSession + 1;
+  
+  // 生成子目录名称
+  char dirName[32];
+  snprintf(dirName, sizeof(dirName), "/images/timelapse/%d", currentTimelapseSession);
+  
+  currentTimelapseDir = String(dirName);
+  
+  // 创建子目录
+  if (!SD.mkdir(currentTimelapseDir)) {
+    serialPrintf("Failed to create %s directory\n", currentTimelapseDir.c_str());
+    return false;
+  }
+  
+  serialPrintf("Created timelapse directory: %s\n", currentTimelapseDir.c_str());
   return true;
 }
 
@@ -821,7 +860,13 @@ void updateTimelapseDisplay() {
   }
   
   M5Cardputer.Display.setCursor(5, 20);
-  M5Cardputer.Display.printf("Next: %ds", countdown);
+  if (timeSinceLastShot >= timelapseInterval) {
+    M5Cardputer.Display.fillRect(5, 20, 100, 10, TFT_BLACK);
+    M5Cardputer.Display.printf("Capturing");
+  } else {
+    M5Cardputer.Display.fillRect(5, 20, 100, 10, TFT_BLACK);
+    M5Cardputer.Display.printf("Next: %ds", countdown);
+  }
   
   // 右上角：存储卡剩余容量和电量百分比
   uint64_t freeSpace = getSDCardFreeSpace();
@@ -912,7 +957,7 @@ void startTimelapseMode() {
   M5Cardputer.Display.println("Timelapse Mode");
   M5Cardputer.Display.setTextSize(1);
   M5Cardputer.Display.setCursor(10, 90);
-  M5Cardputer.Display.println("Power off to stop and reset camera");
+  M5Cardputer.Display.println("Press BtnA to exit");
   delay(2000);
   
   serialPrintf("Timelapse mode started\n");
@@ -1010,16 +1055,50 @@ bool captureTimelapsePhoto() {
   
   serialPrintf("[Timelapse] Content length: %d\n", len);
   
-  // 生成文件名：IMG_YYYYMMDD_HHMMSS.jpg
-  time_t now;
-  struct tm timeinfo;
-  time(&now);
-  localtime_r(&now, &timeinfo);
+  // 查找当前会话中最大的照片编号
+  int maxPhotoNum = -1;
+  File sessionDir = SD.open(currentTimelapseDir);
+  if (sessionDir) {
+    File file = sessionDir.openNextFile();
+    while (file) {
+      if (file.isDirectory()) {
+        file = sessionDir.openNextFile();
+        continue;
+      }
+      
+      String fileName = file.name();
+      // 文件名格式：IMG_XXXX_YYYY.jpg，提取YYYY作为编号
+      int lastSlash = fileName.lastIndexOf('/');
+      if (lastSlash >= 0) {
+        fileName = fileName.substring(lastSlash + 1);
+      }
+      
+      if (fileName.startsWith("IMG_") && fileName.endsWith(".jpg")) {
+        // 找到第二个下划线的位置
+        int firstUnderscore = fileName.indexOf('_');
+        int secondUnderscore = fileName.indexOf('_', firstUnderscore + 1);
+        
+        if (secondUnderscore > 0) {
+          String numStr = fileName.substring(secondUnderscore + 1, fileName.length() - 4);
+          int photoNum = numStr.toInt();
+          if (photoNum > maxPhotoNum) {
+            maxPhotoNum = photoNum;
+          }
+        }
+      }
+      
+      file = sessionDir.openNextFile();
+    }
+    sessionDir.close();
+  }
   
+  // 新照片编号为最大编号+1
+  int photoNum = maxPhotoNum + 1;
+  
+  // 生成文件名：IMG_XXXX_YYYY.jpg
   char filename[64];
-  snprintf(filename, sizeof(filename), "/images/timelapse/IMG_%04d%02d%02d_%02d%02d%02d.jpg",
-           timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-           timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+  snprintf(filename, sizeof(filename), "%s/IMG_%d_%04d.jpg",
+           currentTimelapseDir.c_str(), currentTimelapseSession, photoNum);
   
   // 保存照片到SD卡
   File photoFile = SD.open(filename, FILE_WRITE);
@@ -1369,8 +1448,8 @@ void loop() {
   
   // Timelapse模式处理
   if (isTimelapseMode) {
-    // 检测任意按键（仅键盘）
-    bool anyKeyPressed = M5Cardputer.Keyboard.isChange();
+    // 检测任意按键（键盘和BtnA）
+    bool anyKeyPressed = M5Cardputer.Keyboard.isChange() || M5Cardputer.BtnA.wasPressed();
     
     if (anyKeyPressed) {
       M5Cardputer.Keyboard.updateKeysState();
@@ -1384,6 +1463,12 @@ void loop() {
       } else {
         // 更新最后操作时间
         lastUserActionTime = millis();
+        
+        // 处理BtnA退出timelapse模式（只在屏幕点亮状态下）
+        if (M5Cardputer.BtnA.wasPressed()) {
+          stopTimelapseMode();
+          return;
+        }
       }
     }
     
