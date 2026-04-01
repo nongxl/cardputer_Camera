@@ -1281,48 +1281,54 @@ void loop() {
     appState.isCaptureReq = true;
   }
   
-  // 处理拍摄请求 (单次快照)
+  // 处理拍摄请求
   if (appState.isCaptureReq) {
     appState.isCaptureReq = false;
+    // logLine("Processing capture request...");
     if (captureSnapshot()) {
+      // logLine("Capture successful");
+      
       // 保存照片到SD卡
       if (isSDInitialized) {
+        // logLine("Saving photo to SD card...");
+        
+        // 获取当前缓冲区的数据 (直接使用 networkBuffer)
         if (appState.networkSize > 0) {
-          // 创建带时间戳的文件名 (128字节缓冲区防止溢出)
+          // 创建带时间戳的文件名
           time_t now = time(nullptr);
           struct tm *timeinfo = localtime(&now);
-          char filename[128];
+          char filename[40];
           sprintf(filename, "/images/IMG_%04d%02d%02d_%02d%02d%02d.jpg", 
                   timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
                   timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
           
+          // 打开文件进行写入
           File file = SD.open(filename, FILE_WRITE);
           if (!file) {
-            snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "SD Open Error!");
-            appState.overlayTimestamp = millis();
+            // logLine("Failed to open file");
           } else {
+            // 写入JPEG数据
             size_t bytesWritten = file.write(appState.networkBuffer, appState.networkSize);
             if (bytesWritten != appState.networkSize) {
-              snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "SD Write Error!");
+              // logLine("Failed to write to file");
             } else {
-              // 成功保存照片，记录文件名并在 UI 显示 2 秒
-              snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "Saved: %s", filename + 8);
+              // 成功保存照片，显示 Overlay 提示
+              snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "Saved: %s", filename + 8); // 跳过 "/images/"
               appState.overlayTimestamp = millis();
-              Serial.printf("Photo saved: %s (%d bytes)\n", filename, (int)appState.networkSize);
+              Serial.printf("Photo saved: %s\n", filename);
             }
             file.close();
           }
         }
       } else {
-        snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "SD Not Found!");
+        snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "No SD Card!");
         appState.overlayTimestamp = millis();
       }
+
     } else {
-      snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "Capture Failed!");
-      appState.overlayTimestamp = millis();
+      // logLine("Capture failed");
     }
   }
-
   
   // 检查WiFi连接状态
   if (WiFi.status() == WL_CONNECTED) {
@@ -1452,29 +1458,6 @@ void loop() {
       char overlayBuf[32];
       snprintf(overlayBuf, sizeof(overlayBuf), "FPS:%.1f %u/%uKB",
                currentFps, cachedUsedKB, cachedTotalKB);
-      
-      canvas.setCursor(0, 0);
-      canvas.setTextSize(1);
-      canvas.setTextColor(TFT_WHITE, TFT_BLACK);
-      canvas.print(overlayBuf);
-      
-      // 添加拍照成功的悬浮条通知 (Overlay Msg)
-      if (appState.overlayMsg[0] != '\0' && (millis() - appState.overlayTimestamp < 2000)) {
-        canvas.fillRect(0, 120, 240, 15, TFT_BLUE);
-        canvas.setCursor(5, 123);
-        canvas.setTextColor(TFT_WHITE);
-        canvas.print(appState.overlayMsg);
-      } else {
-        // 如果超过2秒，清理标记
-        appState.overlayMsg[0] = '\0';
-      }
-      
-      // 最终将绘制好的 canvas 一次性推送到屏幕
-      canvas.pushSprite(0, 0);
-    }
-  }
-}
-
       canvas.setTextColor(TFT_WHITE);
       canvas.setTextSize(1);
       canvas.setCursor(115, 2);
