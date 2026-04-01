@@ -224,23 +224,18 @@ bool parseJpegSize(uint8_t* jpegData, size_t jpegSize, int& width, int& height) 
   return false;
 }
 
-// 拍摄快照
-bool captureSnapshot() {
-  HTTPClient http;
-  const char* captureUrl = "http://192.168.4.1/api/v1/capture";
-  
-  http.begin(captureUrl);
-  http.addHeader("User-Agent", "M5Cardputer");
-  http.setTimeout(15000);
-  
-  int code = http.GET();
-  if (code != 200) {
-    http.end();
-    return false;
+// 在屏幕缓冲区渲染拍照提示 (独立函数以便连拍时共用)
+void drawCaptureOverlay() {
+  if (appState.overlayTimestamp > 0) {
+    if (millis() - appState.overlayTimestamp < 5000) { // 延长到 5 秒
+      canvas.setTextColor(TFT_WHITE);
+      canvas.setTextSize(1);
+      canvas.setCursor(10, 120);
+      canvas.print(appState.overlayMsg);
+    } else {
+      appState.overlayTimestamp = 0;
+    }
   }
-  
-  http.end();
-  return true;
 }
 
 // 在屏幕上显示一行文本
@@ -275,6 +270,115 @@ void logHttpResponseHeaders(String prefix, int code, HTTPClient& http) {
     serialPrintf("[%s] HTTP %d\n", prefix.c_str(), code);
   }
 }
+
+// 拍摄快照 (仅作为触发器)
+bool captureSnapshot() {
+  HTTPClient http;
+  const char* captureUrl = "http://192.168.4.1/api/v1/capture";
+  
+  http.begin(captureUrl);
+  http.addHeader("User-Agent", "M5Cardputer");
+  http.setTimeout(15000);
+  
+  int code = http.GET();
+  http.end();
+  return (code == 200);
+}
+
+// 核心抓拍函数：支持单张与连拍，包含双阶段触发获取逻辑
+bool performCapture(bool isBurst = false, int burstIndex = 0) {
+  if (!isSDInitialized) {
+    snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "No SD Card!");
+    appState.overlayTimestamp = millis();
+    return false;
+  }
+  
+  const char* captureUrl = "http://192.168.4.1/api/v1/capture";
+  
+  // 第一步：触发拍摄 (针对单片机摄像头，通常需要先触发一次)
+  if (!isBurst) { // 连拍时由于连续请求，可能不需要每次都额外触发一次，但单拍必须确保
+    HTTPClient http;
+    http.begin(captureUrl);
+    http.addHeader("User-Agent", "M5Cardputer");
+    http.setTimeout(5000);
+    http.GET();
+    http.end();
+    delay(200);
+  }
+  
+  // 第二步：正式获取图像数据
+  HTTPClient http;
+  http.begin(captureUrl);
+  http.addHeader("User-Agent", "M5Cardputer");
+  http.setTimeout(10000);
+  int code = http.GET();
+  
+  if (code != 200) {
+    http.end();
+    serialPrintf("Capture failed, HTTP %d\n", code);
+    return false;
+  }
+  
+  // 准备保存文件
+  time_t now = time(nullptr);
+  struct tm *timeinfo = localtime(&now);
+  char filename[64];
+  if (isBurst) {
+    snprintf(filename, sizeof(filename), "/images/IMG_%04d%02d%02d_%02d%02d%02d_%03d.jpg",
+             timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
+             timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, burstIndex);
+  } else {
+    snprintf(filename, sizeof(filename), "/images/IMG_%04d%02d%02d_%02d%02d%02d.jpg",
+             timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
+             timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+  }
+  
+  File file = SD.open(filename, FILE_WRITE);
+  if (!file) {
+    http.end();
+    serialPrintf("Failed to open file: %s\n", filename);
+    return false;
+  }
+  
+  // 流式读取并保存
+  WiFiClient* s = http.getStreamPtr();
+  static uint8_t buffer[1024];
+  int totalBytes = 0;
+  int len = http.getSize();
+  unsigned long startT = millis();
+  
+  while (http.connected() && (len > 0 || len == -1)) {
+    if (millis() - startT > 10000) break; // 超时保护
+    size_t size = s->available();
+    if (size > 0) {
+      int bytes = s->read(buffer, ((size > sizeof(buffer)) ? sizeof(buffer) : size));
+      if (bytes > 0) {
+        file.write(buffer, bytes);
+        totalBytes += bytes;
+        if (len > 0) len -= bytes;
+      }
+    } else {
+      delay(1);
+    }
+  }
+  
+  file.close();
+  http.end();
+  
+  // 更新反馈信息
+  if (isBurst) {
+    snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "#%d Saved: %s", burstIndex + 1, filename + 8);
+  } else {
+    snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "Saved: %s", filename + 8);
+  }
+  appState.overlayTimestamp = millis();
+  serialPrintf("Photo saved: %s (%d bytes)\n", filename, totalBytes);
+  
+  return true;
+}
+
+
+// 记录HTTP响应头
 
 // 设置相机参数
 bool setCameraParameter(String param, int value) {
@@ -940,7 +1044,6 @@ void initHardware() {
   SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
   
   if (!SD.begin(SD_CS)) {
-
     displayLine("SD card init failed!");
     Serial.println("SD card initialization failed!");
     isSDInitialized = false;
@@ -948,6 +1051,15 @@ void initHardware() {
     isSDInitialized = true;
     displayLine("SD card initialized!");
     Serial.println("SD card initialized successfully!");
+    
+    // 确保 /images 目录存在
+    if (!SD.exists("/images")) {
+      if (SD.mkdir("/images")) {
+        Serial.println("Created /images directory");
+      } else {
+        Serial.println("Failed to create /images directory");
+      }
+    }
   }
 }
 
@@ -1277,56 +1389,57 @@ void loop() {
   }
   
   // 处理BtnA按下（拍照）
-  if (M5Cardputer.BtnA.wasPressed()) {
-    appState.isCaptureReq = true;
-  }
-  
-  // 处理拍摄请求
-  if (appState.isCaptureReq) {
-    appState.isCaptureReq = false;
-    // logLine("Processing capture request...");
-    if (captureSnapshot()) {
-      // logLine("Capture successful");
+  // --- 核心按键交互逻辑 (BtnA): 短按单拍 / 长按 (0.5s) 连拍 (0.2s 间隔) ---
+  static unsigned long btnAPressStartTime = 0;
+  static bool isBtnAPressed = false;
+  static bool hasBurstStarted = false;
+  static int burstCounter = 0;
+  static unsigned long lastBurstShotTime = 0;
+
+  if (M5Cardputer.BtnA.isPressed()) {
+    if (!isBtnAPressed) {
+      // 刚按下：记录时间并预切换至高分辨率，停止实时流以腾出带宽
+      isBtnAPressed = true;
+      btnAPressStartTime = millis();
+      hasBurstStarted = false;
+      burstCounter = 0;
       
-      // 保存照片到SD卡
-      if (isSDInitialized) {
-        // logLine("Saving photo to SD card...");
-        
-        // 获取当前缓冲区的数据 (直接使用 networkBuffer)
-        if (appState.networkSize > 0) {
-          // 创建带时间戳的文件名
-          time_t now = time(nullptr);
-          struct tm *timeinfo = localtime(&now);
-          char filename[40];
-          sprintf(filename, "/images/IMG_%04d%02d%02d_%02d%02d%02d.jpg", 
-                  timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
-                  timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-          
-          // 打开文件进行写入
-          File file = SD.open(filename, FILE_WRITE);
-          if (!file) {
-            // logLine("Failed to open file");
-          } else {
-            // 写入JPEG数据
-            size_t bytesWritten = file.write(appState.networkBuffer, appState.networkSize);
-            if (bytesWritten != appState.networkSize) {
-              // logLine("Failed to write to file");
-            } else {
-              // 成功保存照片，显示 Overlay 提示
-              snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "Saved: %s", filename + 8); // 跳过 "/images/"
-              appState.overlayTimestamp = millis();
-              Serial.printf("Photo saved: %s\n", filename);
-            }
-            file.close();
+      streamClient.stop();
+      streamHttp.end();
+      setCameraResolution(CAMERA_RESOLUTION_HIGH);
+      delay(200); 
+    } else {
+      // 持续按下中：检查是否达到连拍阈值 (0.5s)
+      if (millis() - btnAPressStartTime > 500) {
+        if (millis() - lastBurstShotTime > 200) { // 0.2s 间隔
+          lastBurstShotTime = millis();
+          if (performCapture(true, burstCounter++)) {
+            hasBurstStarted = true;
+            // 连拍实时反馈：在当前画布内容上叠加提示并推送到屏幕
+            // 连拍时由于流已停止，我们需要手动触发提示渲染
+            drawCaptureOverlay();
+            canvas.pushSprite(0, 0); 
+            // 强制刷新屏幕显示，确保用户即时看到
+            M5Cardputer.Display.display(); 
           }
         }
-      } else {
-        snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "No SD Card!");
-        appState.overlayTimestamp = millis();
       }
-
-    } else {
-      // logLine("Capture failed");
+    }
+  } else {
+    if (isBtnAPressed) {
+      // 用户松开按键
+      isBtnAPressed = false;
+      
+      if (!hasBurstStarted) {
+        // 如果从未进入过连拍状态，说明是短按：执行单张高清拍摄
+        performCapture(false, 0);
+      }
+      
+      // 拍摄结束：恢复低分辨率串流并标记重启视频流
+      setCameraResolution(CAMERA_RESOLUTION_LOW);
+      appState.isRestartStream = true;
+      drawCaptureOverlay();
+      canvas.pushSprite(0, 0); // 渲染最终保存提示
     }
   }
   
@@ -1427,7 +1540,9 @@ void loop() {
     }
   }
   
-  if (appState.currentState == STATE_DISPLAYING && (millis() - lastDisplayTime >= minFrameInterval)) {
+  // 显示逻辑：当有新帧或是由于拍照产生的提示信息需要显示时触发
+  bool hasOverlay = (appState.overlayTimestamp > 0);
+  if ((appState.currentState == STATE_DISPLAYING || hasOverlay) && (millis() - lastDisplayTime >= minFrameInterval)) {
     // 更新最后显示时间
     lastDisplayTime = millis();
     
@@ -1465,18 +1580,7 @@ void loop() {
     }
     
     // 渲染拍照后的浮动提示 (Overlay)
-    if (appState.overlayTimestamp > 0) {
-      if (millis() - appState.overlayTimestamp < 2000) {
-        // 在底部渲染半透明背板感或简单的对比色文字
-        canvas.setTextColor(TFT_YELLOW);
-        canvas.setTextSize(1);
-        int msgWidth = canvas.textWidth(appState.overlayMsg);
-        canvas.setCursor((240 - msgWidth) / 2, 120);
-        canvas.print(appState.overlayMsg);
-      } else {
-        appState.overlayTimestamp = 0; // 超时重置
-      }
-    }
+    drawCaptureOverlay();
     
     // 推送到屏幕
 

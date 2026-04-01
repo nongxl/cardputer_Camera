@@ -54,7 +54,9 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 4. Power on the device
 5. The application will automatically connect to the camera module
 6. View the live stream on the screen
-7. Press BtnA to capture photos (saved to SD card)
+7. Capture photos (saved to SD card):
+    - **Single Shot**: Short press `BtnA` to capture a high-resolution photo.
+    - **Burst Mode**: Long press `BtnA` (> 0.5s) to capture high-resolution photos every 0.2s.
 8. Press 0-6 number keys to set special effect filter
 9. Press ` (backtick) to view camera status and parameter settings
 10. Adjust camera parameters using keyboard:
@@ -65,7 +67,9 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 4. 打开设备电源
 5. 应用将自动连接到相机模块
 6. 在屏幕上查看实时串流画面
-7. 按下BtnA按钮拍摄照片（保存到SD卡）
+7. 拍摄照片（保存到SD卡）：
+    - **单张拍摄**：短按 `BtnA` 按钮。
+    - **连拍模式**：长按 `BtnA` 按钮（>0.5秒），每0.2秒自动拍摄一张。
 8. 按数字键0-6设置特效滤镜
 9. 按`（反引号）查看相机状态和参数设置
 10. 使用键盘调整相机参数：
