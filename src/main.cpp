@@ -12,7 +12,7 @@
 #define CAMERA_RESOLUTION_TIMELAPSE 10 // timelapse模式分辨率
 
 #define CAMERA_QUALITY_STREAM    2  // 串流模式画质（相机支持的最低值=最高画质）
-#define CAMERA_QUALITY_TIMELAPSE 2  // timelapse拍摄画质（与串流保持一致）
+#define CAMERA_QUALITY_TIMELAPSE 0  // timelapse拍摄画质（与串流保持一致）
 
 #define GLOBAL_MAX_JPEG_SIZE 64 * 1024 // 64KB (quality=2时约7KB，预留充足余量)
 #define MIN_JPEG_SIZE 2000            // 最小有效 JPEG 帧大小 (2KB)，过滤噪声同时兼顾快速响应
@@ -103,7 +103,11 @@ typedef struct {
   String boundary;
   int consecutiveErrors;     // 连续解码错误计数
   int lastValidSize;         // 上一次成功解码的图像大小
+  char overlayMsg[64];       // 屏幕底部浮动提示信息
+  uint32_t overlayTimestamp; // 浮动提示显示开始时间
 } AppState;
+
+
 
 
 
@@ -137,8 +141,13 @@ void initAppState() {
   appState.expectedCL = 0;
   appState.frameReadCount = 0;
   appState.consecutiveErrors = 0;
+  appState.consecutiveErrors = 0;
   appState.lastValidSize = 0;
+
+  appState.overlayMsg[0] = '\0';
+  appState.overlayTimestamp = 0;
 }
+
 
 
 
@@ -290,9 +299,9 @@ bool setCameraParameter(String param, int value) {
 // 设置相机分辨率
 bool setCameraResolution(int resolution) {
   // 在屏幕上显示相机初始化信息
-  M5Cardputer.Display.setCursor(10, 100);
-  M5Cardputer.Display.printf("Setting camera resolution to %d...\n", resolution);
+  displayLine(String("Setting res to ") + resolution + "...");
   Serial.printf("Setting camera resolution to %d...\n", resolution);
+
   
   HTTPClient http;
   String url = String("http://192.168.4.1/api/v1/control?var=framesize&val=") + resolution;
@@ -316,8 +325,8 @@ bool setCameraResolution(int resolution) {
   
   http.end();
   serialPrintf("Camera resolution set to %d successfully\n", resolution);
-  // logLine("Camera resolution set successfully");
-  M5Cardputer.Display.println("Camera resolution set!");
+  // displayLine("Res set success");
+
   
   // 清除图像尺寸缓存（因为分辨率改变了）
   appState.sizeCached = false;
@@ -486,46 +495,46 @@ bool createTimelapseDir() {
 bool captureTimelapsePhoto() {
   serialPrintf("Capturing timelapse photo %d...\n", timelapsePhotoCount + 1);
   
-  // 获取最新图像数据
-  HTTPClient http;
-  
-  // 第一次请求：触发拍摄（忽略返回的旧图像数据）
   const char* captureUrl = "http://192.168.4.1/api/v1/capture";
-  http.begin(captureUrl);
-  http.addHeader("User-Agent", "M5Cardputer");
-  http.setTimeout(15000);
   
-  serialPrintf("[Timelapse] First request (trigger): GET %s\n", captureUrl);
-  int code = http.GET();
-  
-  // 关闭第一次请求
-  http.end();
+  // 拍摄照片
+  {
+    HTTPClient http;
+    http.begin(captureUrl);
+    http.addHeader("User-Agent", "M5Cardputer");
+    http.setTimeout(15000);
+    //serialPrintf("[Timelapse] Step 1: Triggering capture...\n");
+    int code = http.GET();
+    http.end();
+  }
   
   // 等待相机处理新图像
-  delay(500);
+  delay(1000);
   
-  // 第二次请求：获取新的图像数据
+  // 获取刚刚拍摄的照片 (使用独立对象)
+  HTTPClient http;
   http.begin(captureUrl);
   http.addHeader("User-Agent", "M5Cardputer");
   http.setTimeout(15000);
-  
-  serialPrintf("[Timelapse] Second request (fetch): GET %s\n", captureUrl);
-  code = http.GET();
+  //serialPrintf("[Timelapse] Step 2: Fetching photo...\n");
+  int code = http.GET();
   
   if (code != 200) {
-    serialPrintf("[Timelapse] HTTP %d\n", code);
+    serialPrintf("[Timelapse] HTTP Fetch Error: %d\n", code);
     http.end();
+
+
     // 即使拍摄失败，也要重置倒计时，避免卡在0秒
     timelapseLastShotTime = millis();
     return false;
   }
   
   String ct = http.header("Content-Type");
-  serialPrintf("[Timelapse] CT: %s\n", ct.c_str());
+  //serialPrintf("[Timelapse] CT: %s\n", ct.c_str());
   
   // 验证内容类型是否为JPEG，但允许空内容类型（相机API可能不设置它）
   if (!ct.isEmpty() && !ct.startsWith("image/jpeg")) {
-    serialPrintf("[Timelapse] Unexpected content-type: %s\n", ct.c_str());
+    //serialPrintf("[Timelapse] Unexpected content-type: %s\n", ct.c_str());
     http.end();
     timelapseLastShotTime = millis();
     return false;
@@ -537,7 +546,7 @@ bool captureTimelapsePhoto() {
   s->setTimeout(10000);
   int len = http.getSize();
   
-  serialPrintf("[Timelapse] Content length: %d\n", len);
+  //serialPrintf("[Timelapse] Content length: %d\n", len);
   
   // 寻找当前会话中最大的照片编号
   int maxPhotoNum = -1;
@@ -557,9 +566,9 @@ bool captureTimelapsePhoto() {
     sessionDir.close();
   }
   
-  // 创建带序号的文件名
-  char filename[40];
-  sprintf(filename, "%s/IMG_%04d.jpg", currentTimelapseDir.c_str(), maxPhotoNum + 1);
+  // 创建带序号的文件名 (增加缓冲区大小以防止溢出导致 0x00000004 崩溃)
+  char filename[128];
+  snprintf(filename, sizeof(filename), "%s/IMG_%04d.jpg", currentTimelapseDir.c_str(), maxPhotoNum + 1);
   
   // 保存到SD卡
   File file = SD.open(filename, FILE_WRITE);
@@ -568,6 +577,7 @@ bool captureTimelapsePhoto() {
     timelapseLastShotTime = millis();
     return false;
   }
+
   
   // 读取并写入数据
   static uint8_t buffer[1024];
@@ -597,51 +607,58 @@ bool captureTimelapsePhoto() {
   return true;
 }
 
-// 更新timelapse显示界面
+// 更新timelapse显示界面 (Canvas离屏渲染，防止驱动冲突与消除闪烁)
 void updateTimelapseDisplay() {
-  // 清除屏幕
-  M5Cardputer.Display.fillScreen(BLACK);
-  M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+  static uint32_t lastUpdate = 0;
+  if (millis() - lastUpdate < 500) return;
+  lastUpdate = millis();
+
+  // 全部在 canvas 离屏画布上绘制，避开与显示驱动底层直接竞争
+  canvas.fillScreen(BLACK);
+  canvas.setTextColor(TFT_WHITE, TFT_BLACK);
   
   // 显示标题
-  M5Cardputer.Display.setTextSize(2);
-  M5Cardputer.Display.setCursor(10, 5);
-  M5Cardputer.Display.println("Timelapse Mode");
-  M5Cardputer.Display.setTextSize(1);
+  canvas.setTextSize(2);
+  canvas.setCursor(10, 5);
+  canvas.println("Timelapse");
   
   // 显示拍摄数量
-  M5Cardputer.Display.setCursor(10, 30);
-  M5Cardputer.Display.printf("Photos: %d", timelapsePhotoCount);
+  canvas.setTextSize(1);
+  canvas.setCursor(10, 35);
+  canvas.printf("Photos: %d", timelapsePhotoCount);
   
   // 显示倒计时
   unsigned long timeSinceLastShot = millis() - timelapseLastShotTime;
-  unsigned long countdown = timelapseInterval - timeSinceLastShot;
+  long countdown = (long)timelapseInterval - (long)timeSinceLastShot;
   if (countdown < 0) countdown = 0;
   
-  M5Cardputer.Display.setCursor(5, 20);
+  canvas.setCursor(10, 55);
   if (timeSinceLastShot >= timelapseInterval) {
-    M5Cardputer.Display.fillRect(5, 20, 100, 10, TFT_BLACK);
-    M5Cardputer.Display.printf("Capturing");
+    canvas.setTextColor(TFT_YELLOW);
+    canvas.println("Status: Capturing...");
   } else {
-    M5Cardputer.Display.fillRect(5, 20, 100, 10, TFT_BLACK);
-    M5Cardputer.Display.printf("Next: %ds", countdown / 1000);
+    canvas.setTextColor(TFT_CYAN);
+    canvas.printf("Next Photo: %02ld s", countdown / 1000);
   }
   
-  // 右上角：存储卡剩余容量和电量百分比
-  uint64_t freeSpace = SD.totalBytes() - SD.usedBytes();
-  float freeSpaceMB = freeSpace / (1024.0f * 1024.0f);
-  int battery = M5Cardputer.Power.getBatteryLevel();
+  // 右上角信息
+  if (isSDInitialized) {
+    canvas.setCursor(160, 5);
+    canvas.setTextColor(TFT_GREEN);
+    canvas.printf("SD:OK");
+  }
   
-  String spaceStr = String(freeSpaceMB, 1) + "MB";
-  int spaceStrWidth = M5Cardputer.Display.textWidth(spaceStr);
-  M5Cardputer.Display.setCursor(320 - spaceStrWidth - 5, 5);
-  M5Cardputer.Display.printf("%s", spaceStr.c_str());
+  canvas.setCursor(10, 115);
+  canvas.setTextColor(TFT_DARKGREY);
+  canvas.println("Hold BtnA to Exit");
   
-  String batteryStr = String(battery) + "%";
-  int batteryStrWidth = M5Cardputer.Display.textWidth(batteryStr);
-  M5Cardputer.Display.setCursor(320 - batteryStrWidth - 5, 20);
-  M5Cardputer.Display.printf("%s", batteryStr.c_str());
+  // 最终推送到屏幕
+  canvas.pushSprite(0, 0);
 }
+
+
+
+
 
 // 启动timelapse模式
 void startTimelapseMode() {
@@ -754,71 +771,150 @@ void stopTimelapseMode() {
   // 清屏以移除统计信息，准备显示视频流
   M5Cardputer.Display.clearDisplay();
   
+  // 核心重置：将状态机回滚到接收模式，并清除残留计数
+  appState.currentState = STATE_RECEIVING;
+  appState.parseState = AppState::P_HTTP_HEADERS;
+  appState.networkSize = 0;
+  appState.isCaptureReq = false;
+  appState.frameReadCount = 0;
+  appState.consecutiveErrors = 0;
+  
   serialPrintf("Timelapse mode stopped. Total photos: %d\n", timelapsePhotoCount);
 }
 
-// 显示状态文件
+
+// 显示状态文件 (重构为格式化显示)
 void showStatusFile() {
   if (!isSDInitialized) return;
   
   File file = SD.open("/camera_status.json");
-  if (!file) return;
-  
-  M5Cardputer.Display.clearDisplay();
-  M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-  M5Cardputer.Display.setTextSize(1);
-  
-  int lineCount = 0;
-  while (file.available()) {
-    String line = file.readStringUntil('\n');
-    M5Cardputer.Display.setCursor(10, 10 + lineCount * 12);
-    M5Cardputer.Display.println(line);
-    lineCount++;
-    if (lineCount > 15) break;
+  if (!file) {
+    displayLine("No status file found");
+    delay(1000);
+    return;
   }
   
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, file);
   file.close();
   
-  // 显示滚动提示
-  M5Cardputer.Display.setCursor(10, 220);
-  M5Cardputer.Display.println("Press ESC to exit");
-  
-  // 等待用户退出
-  bool isShowingStatus = true;
-  int statusScrollOffset = 0;
-  while (isShowingStatus) {
+  // 强制去抖：等待按键完全释放 (Edge Trigger)
+  delay(100);
+  while (M5Cardputer.Keyboard.isPressed()) {
     M5Cardputer.update();
+    delay(10);
+  }
+
+  M5Cardputer.Display.clearDisplay();
+
+  M5Cardputer.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
+  M5Cardputer.Display.setTextSize(2);
+  M5Cardputer.Display.setCursor(10, 5);
+  M5Cardputer.Display.println("Camera Status");
+  
+  M5Cardputer.Display.setTextSize(1);
+  M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+  
+  if (error) {
+    M5Cardputer.Display.setCursor(10, 40);
+    M5Cardputer.Display.println("JSON Parse Error");
+  } else {
+    int y = 35;
+    auto printParam = [&](const char* label, const char* key) {
+      M5Cardputer.Display.setCursor(10, y);
+      M5Cardputer.Display.printf("%-12s: %s", label, doc[key].as<String>().c_str());
+      y += 15;
+    };
     
-    if (M5Cardputer.Keyboard.isChange()) {
-      M5Cardputer.Keyboard.updateKeysState();
-      
-      // 按`键退出
-      if (M5Cardputer.Keyboard.isKeyPressed('`')) {
-        isShowingStatus = false;
-      }
-      
-      // 上键滚动
-      if (M5Cardputer.Keyboard.isKeyPressed(';')) {
-        if (statusScrollOffset > 0) {
-          statusScrollOffset--;
-        }
-      }
-      
-      // 下键滚动
-      if (M5Cardputer.Keyboard.isKeyPressed('.')) {
-        if (statusScrollOffset < lineCount - 15) {
-          statusScrollOffset++;
-        }
-      }
-    }
+    printParam("Resolution", "framesize");
+    printParam("Quality", "quality");
+    printParam("Brightness", "brightness");
+    printParam("Contrast", "contrast");
+    printParam("Saturation", "saturation");
+    printParam("SpecialEff", "special_effect");
+    printParam("AWB", "awb");
+    printParam("AEC", "aec");
   }
   
-  // 退出后清空屏幕并重启视频流
-  M5Cardputer.Display.fillScreen(BLACK);
+  M5Cardputer.Display.setCursor(10, 115);
+  M5Cardputer.Display.setTextColor(TFT_DARKGREY);
+  M5Cardputer.Display.println("Press ANY Key to Return");
   
-  // 标记需要重启视频流
-  appState.isRestartStream = true;
+  // 等待用户退出 (边沿触发)
+  while (true) {
+    M5Cardputer.update();
+    if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+      break;
+    }
+    delay(50);
+  }
+  
+  // 退出前再次等待释放，防止主循环接管长按
+  while (M5Cardputer.Keyboard.isPressed()) {
+    M5Cardputer.update();
+    delay(10);
+  }
 }
+
+
+// 显示帮助菜单
+void showHelp() {
+  M5Cardputer.Display.clearDisplay();
+  M5Cardputer.Display.setTextColor(TFT_GREEN, TFT_BLACK);
+  M5Cardputer.Display.setTextSize(2);
+  M5Cardputer.Display.setCursor(10, 5);
+  M5Cardputer.Display.println("Controls Help");
+  
+  // 强制去抖：等待按键完全释放 (Edge Trigger)
+  delay(100);
+  while (M5Cardputer.Keyboard.isPressed()) {
+    M5Cardputer.update();
+    delay(10);
+  }
+
+  M5Cardputer.Display.setTextSize(1);
+
+
+  M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+  
+  const char* helpText[] = {
+    "BtnA: Capture Photo / Exit Timelapse",
+    "T   : Enter Timelapse Mode",
+    "R   : Restart Device",
+    "ESC : View Camera Status",
+    "H   : Show this help",
+    ";/. : Brightness +/-",
+    "//, : Contrast +/-",
+    "[/] : Saturation +/-",
+    "_/= : Sharpness +/-",
+    "0-6 : Special Effects"
+  };
+  
+  for (int i = 0; i < 10; i++) {
+    M5Cardputer.Display.setCursor(10, 35 + i * 10);
+    M5Cardputer.Display.println(helpText[i]);
+  }
+  
+  M5Cardputer.Display.setCursor(10, 115);
+  M5Cardputer.Display.setTextColor(TFT_DARKGREY);
+  M5Cardputer.Display.println("Press ANY Key to Return");
+  
+  while (true) {
+    M5Cardputer.update();
+    if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+      break;
+    }
+    delay(50);
+  }
+
+  // 退出前再次等待释放
+  while (M5Cardputer.Keyboard.isPressed()) {
+    M5Cardputer.update();
+    delay(10);
+  }
+}
+
+
 
 // 初始化硬件
 void initHardware() {
@@ -1097,11 +1193,17 @@ void loop() {
       }
     }
     
-    // 处理显示状态信息（只在按键变化时触发一次）
-    if (M5Cardputer.Keyboard.isKeyPressed('`')) {
+    // 处理显示状态信息 (ESC)
+    if (M5Cardputer.Keyboard.isKeyPressed('`')) { // '`' is ESC
       showStatusFile();
     }
+    
+    // 处理显示说明 (h键)
+    if (M5Cardputer.Keyboard.isKeyPressed('h')) {
+      showHelp();
+    }
   }
+
   
   // 处理参数调节按键（持续检测，带防抖动）
   unsigned long currentTime = millis();
@@ -1179,54 +1281,48 @@ void loop() {
     appState.isCaptureReq = true;
   }
   
-  // 处理拍摄请求
+  // 处理拍摄请求 (单次快照)
   if (appState.isCaptureReq) {
     appState.isCaptureReq = false;
-    // logLine("Processing capture request...");
     if (captureSnapshot()) {
-      // logLine("Capture successful");
-      
       // 保存照片到SD卡
       if (isSDInitialized) {
-        // logLine("Saving photo to SD card...");
-        
-        // 获取当前缓冲区的数据 (直接使用 networkBuffer)
         if (appState.networkSize > 0) {
-          // 创建带时间戳的文件名
+          // 创建带时间戳的文件名 (128字节缓冲区防止溢出)
           time_t now = time(nullptr);
           struct tm *timeinfo = localtime(&now);
-          char filename[40];
+          char filename[128];
           sprintf(filename, "/images/IMG_%04d%02d%02d_%02d%02d%02d.jpg", 
                   timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
                   timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
           
-          // 打开文件进行写入
           File file = SD.open(filename, FILE_WRITE);
           if (!file) {
-            // logLine("Failed to open file");
+            snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "SD Open Error!");
+            appState.overlayTimestamp = millis();
           } else {
-            // 写入JPEG数据
             size_t bytesWritten = file.write(appState.networkBuffer, appState.networkSize);
             if (bytesWritten != appState.networkSize) {
-              // logLine("Failed to write to file");
+              snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "SD Write Error!");
             } else {
-
-              // logLine(String("Photo saved successfully: ") + filename);
-              M5Cardputer.Display.setCursor(10, 10);
-              M5Cardputer.Display.println(String("Photo saved: ") + filename);
+              // 成功保存照片，记录文件名并在 UI 显示 2 秒
+              snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "Saved: %s", filename + 8);
+              appState.overlayTimestamp = millis();
+              Serial.printf("Photo saved: %s (%d bytes)\n", filename, (int)appState.networkSize);
             }
             file.close();
           }
         }
       } else {
-        // logLine("SD card not initialized, cannot save photo");
-        M5Cardputer.Display.setCursor(10, 10);
-        M5Cardputer.Display.println("SD card not initialized");
+        snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "SD Not Found!");
+        appState.overlayTimestamp = millis();
       }
     } else {
-      // logLine("Capture failed");
+      snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "Capture Failed!");
+      appState.overlayTimestamp = millis();
     }
   }
+
   
   // 检查WiFi连接状态
   if (WiFi.status() == WL_CONNECTED) {
@@ -1356,13 +1452,51 @@ void loop() {
       char overlayBuf[32];
       snprintf(overlayBuf, sizeof(overlayBuf), "FPS:%.1f %u/%uKB",
                currentFps, cachedUsedKB, cachedTotalKB);
+      
+      canvas.setCursor(0, 0);
+      canvas.setTextSize(1);
+      canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+      canvas.print(overlayBuf);
+      
+      // 添加拍照成功的悬浮条通知 (Overlay Msg)
+      if (appState.overlayMsg[0] != '\0' && (millis() - appState.overlayTimestamp < 2000)) {
+        canvas.fillRect(0, 120, 240, 15, TFT_BLUE);
+        canvas.setCursor(5, 123);
+        canvas.setTextColor(TFT_WHITE);
+        canvas.print(appState.overlayMsg);
+      } else {
+        // 如果超过2秒，清理标记
+        appState.overlayMsg[0] = '\0';
+      }
+      
+      // 最终将绘制好的 canvas 一次性推送到屏幕
+      canvas.pushSprite(0, 0);
+    }
+  }
+}
+
       canvas.setTextColor(TFT_WHITE);
       canvas.setTextSize(1);
       canvas.setCursor(115, 2);
       canvas.print(overlayBuf);
     }
     
+    // 渲染拍照后的浮动提示 (Overlay)
+    if (appState.overlayTimestamp > 0) {
+      if (millis() - appState.overlayTimestamp < 2000) {
+        // 在底部渲染半透明背板感或简单的对比色文字
+        canvas.setTextColor(TFT_YELLOW);
+        canvas.setTextSize(1);
+        int msgWidth = canvas.textWidth(appState.overlayMsg);
+        canvas.setCursor((240 - msgWidth) / 2, 120);
+        canvas.print(appState.overlayMsg);
+      } else {
+        appState.overlayTimestamp = 0; // 超时重置
+      }
+    }
+    
     // 推送到屏幕
+
     if (drawSuccess) {
       canvas.pushSprite(0, 0);
       fpsFrameCount++;
@@ -1440,18 +1574,10 @@ void setup() {
     displayLine("press R to restart");
   } else {
     // 显示初始化完成信息
-    displayLine("Initialization completed!");
+    displayLine("Ready!");
     
-    // 短暂显示提示信息
-    delay(1000);
-    
-    // 清屏，准备显示流画面
+    // 清屏，立即准备显示流画面
     M5Cardputer.Display.fillScreen(BLACK);
-    
-    // 显示操作提示
-    M5Cardputer.Display.setCursor(10, 5);
-    M5Cardputer.Display.setTextColor(WHITE);
-    M5Cardputer.Display.println("Press BtnA to capture");
     
     // 启动MJPEG流
     appState.isRestartStream = true;
