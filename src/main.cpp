@@ -97,28 +97,18 @@ typedef struct {
   String lineBuffer;
   int expectedCL;
   int frameReadCount;
-
-  // Chunked 解码器状态
-  enum ChunkState { CS_SIZE, CS_DATA, CS_TRAILER };
-  ChunkState cState;
-  uint32_t chunkSize;
-  String sizeBuf;
-  unsigned long lastAct;
-
-  // 读取缓存 (1024 字节)
-  uint8_t readCache[1024];
-  int cachePos;
-  int cacheLen;
   
   // 网络状态
   bool boundaryFound;
   String boundary;
+  int consecutiveErrors;     // 连续解码错误计数
+  int lastValidSize;         // 上一次成功解码的图像大小
 } AppState;
 
 
 
-// 全局应用状态
 
+// 全局应用状态
 AppState appState;
 
 // 初始化应用状态
@@ -146,17 +136,10 @@ void initAppState() {
   appState.lineBuffer = "";
   appState.expectedCL = 0;
   appState.frameReadCount = 0;
-
-  // 初始化 Chunked 解析器状态
-  appState.cState = AppState::CS_SIZE;
-  appState.chunkSize = 0;
-  appState.sizeBuf = "";
-  appState.lastAct = 0;
-
-  // 初始化缓存状态
-  appState.cachePos = 0;
-  appState.cacheLen = 0;
+  appState.consecutiveErrors = 0;
+  appState.lastValidSize = 0;
 }
+
 
 
 
@@ -902,8 +885,8 @@ bool initWiFi() {
 // 处理子字节流的 MJPEG 解析
 void handlePureMjpegByte(uint8_t c) {
   if (appState.currentState == STATE_DISPLAYING) return;
-
   switch (appState.parseState) {
+
     case AppState::P_HTTP_HEADERS:
       if (c == '\n') {
         String header = appState.lineBuffer;
@@ -915,8 +898,6 @@ void handlePureMjpegByte(uint8_t c) {
         appState.lineBuffer = "";
       } else if (c != '\r') appState.lineBuffer += (char)c;
       break;
-
-
 
     case AppState::P_BOUNDARY:
       if (c == '\n') {
@@ -930,64 +911,41 @@ void handlePureMjpegByte(uint8_t c) {
         String header = appState.lineBuffer;
         header.toLowerCase();
         if (header.length() == 0) {
-          appState.parseState = AppState::P_JPEG_DATA; appState.networkSize = 0; appState.frameReadCount = 0;
+          appState.parseState = AppState::P_JPEG_DATA; 
+          appState.networkSize = 0; 
+          appState.frameReadCount = 0;
         } else if (header.startsWith("content-length:")) {
-          String val = header.substring(15);
-          val.trim();
-          appState.expectedCL = val.toInt();
+          appState.expectedCL = header.substring(15).toInt();
         }
         appState.lineBuffer = "";
       } else if (c != '\r') appState.lineBuffer += (char)c;
       break;
 
-
     case AppState::P_JPEG_DATA:
-      // 首先寻找 SOI (FF D8)
       if (appState.networkSize == 0) {
-        if (c == 0xFF) {
-          appState.networkBuffer[appState.networkSize++] = c;
-        }
-        // 如果不是 FF，则丢弃该字节，直到找到 JPEG 起始
+        if (c == 0xFF) appState.networkBuffer[appState.networkSize++] = c;
       } else if (appState.networkSize == 1) {
-        if (c == 0xD8) {
-          appState.networkBuffer[appState.networkSize++] = c;
-        } else if (c == 0xFF) {
-          // 连续的 FF，维持 networkSize = 1 寻找 D8
-        } else {
-          // 错误的起始，重置
-          appState.networkSize = 0;
-        }
+        if (c == 0xD8) appState.networkBuffer[appState.networkSize++] = c;
+        else if (c != 0xFF) appState.networkSize = 0;
       } else {
-        // 已有 SOI，开始填充直到 EOI 或 长度到达
         if (appState.networkSize < GLOBAL_MAX_JPEG_SIZE) {
           appState.networkBuffer[appState.networkSize++] = c;
         }
         appState.frameReadCount++;
-        
-        bool isFinished = false;
-        // 1. 扫描 EOI (FF D9) - 这是最可靠的帧尾标志
+
+        // 强力对齐：只识别 EOI (FF D9)
         if (appState.networkSize >= 2 && 
             appState.networkBuffer[appState.networkSize-2] == 0xFF && 
             appState.networkBuffer[appState.networkSize-1] == 0xD9) {
-          isFinished = true;
-        }
-        // 2. 备选：如果根据长度计数已到达且已经有基本大小
-        else if (appState.expectedCL > 0 && appState.frameReadCount >= appState.expectedCL) {
-          isFinished = true;
-        }
-
-        if (isFinished) {
-          // 最终校验：必须以 FF D8 开头且长度足够
-          if (appState.networkSize >= 1024 && appState.networkBuffer[0] == 0xFF && appState.networkBuffer[1] == 0xD8) {
+          
+          if (appState.networkSize >= 2048) {
             appState.currentState = STATE_DISPLAYING;
           } else {
-            // 虽然判为结束但内容显然不完整
-            if (appState.networkSize > 2) Serial.print("?");
-            appState.networkSize = 0;
+            appState.networkSize = 0; // 丢弃过小的噪音帧
           }
           appState.parseState = AppState::P_BOUNDARY;
-        } else if (appState.frameReadCount >= GLOBAL_MAX_JPEG_SIZE) {
-          Serial.print("O"); // Overflow
+        } else if (appState.frameReadCount >= 15000) {
+          Serial.print("B"); // 帧大小溢出/同步错误熔断
           appState.networkSize = 0;
           appState.parseState = AppState::P_BOUNDARY;
         }
@@ -996,62 +954,59 @@ void handlePureMjpegByte(uint8_t c) {
   }
 }
 
-void processMjpegStream(WiFiClient& client) {
-  if (appState.currentState == STATE_DISPLAYING) return;
+void processMjpegStream(WiFiClient& client, bool forceReset = false) {
+  enum ChunkState { CS_SIZE, CS_DATA, CS_TRAILER };
+  static ChunkState cState = CS_SIZE;
+  static uint32_t chunkSize = 0;
+  static String sizeBuf = "";
   
-  // 积压防御
-  if (client.available() > 20480) {
-    while (client.available() > 4096) client.read();
-    appState.cachePos = 0; appState.cacheLen = 0; // 清除缓存
-    appState.cState = AppState::CS_SIZE;
-    appState.sizeBuf = "";
-    appState.parseState = AppState::P_BOUNDARY;
+  static uint8_t readCache[1024];
+  static int cachePos = 0;
+  static int cacheLen = 0;
+
+  if (forceReset) {
+    cState = CS_SIZE; chunkSize = 0; sizeBuf = ""; cachePos = 0; cacheLen = 0;
+    appState.parseState = AppState::P_HTTP_HEADERS;
+    appState.networkSize = 0;
+    appState.currentState = STATE_RECEIVING;
+    Serial.println("MJPEG Parser Force Reset");
     return;
   }
 
-  // 循环尝试从网络或缓存读取数据
+  if (appState.currentState == STATE_DISPLAYING) return;
+
   while (true) {
-    // 1. 如果缓存空了，尝试从网络补充
-    if (appState.cachePos >= appState.cacheLen) {
-      if (client.available() == 0) break; // 网络无更多数据，退回主循环
-      appState.cachePos = 0;
-      appState.cacheLen = client.read(appState.readCache, sizeof(appState.readCache));
-      if (appState.cacheLen <= 0) break;
+    if (cachePos >= cacheLen) {
+      if (client.available() == 0) break;
+      cachePos = 0;
+      cacheLen = client.read(readCache, sizeof(readCache));
+      if (cacheLen <= 0) break;
     }
 
-    // 2. 取出一个字节并应用状态机
-    uint8_t c = appState.readCache[appState.cachePos++];
-    appState.lastAct = millis();
-
-    switch (appState.cState) {
-      case AppState::CS_SIZE:
+    uint8_t c = readCache[cachePos++];
+    switch (cState) {
+      case CS_SIZE:
         if (c == '\n') {
-          if (appState.sizeBuf.length() > 0) {
-            appState.chunkSize = strtol(appState.sizeBuf.c_str(), NULL, 16);
-            if (appState.chunkSize == 0) { client.stop(); return; }
-            appState.cState = AppState::CS_DATA;
+          if (sizeBuf.length() > 0) {
+            chunkSize = strtol(sizeBuf.c_str(), NULL, 16);
+            if (chunkSize == 0) { client.stop(); return; }
+            cState = CS_DATA;
           }
-          appState.sizeBuf = "";
-        } else if (isxdigit(c)) appState.sizeBuf += (char)c;
+          sizeBuf = "";
+        } else if (isxdigit(c)) sizeBuf += (char)c;
         break;
 
-      case AppState::CS_DATA:
+      case CS_DATA:
         handlePureMjpegByte(c);
-        if (appState.chunkSize > 0) appState.chunkSize--;
-        if (appState.chunkSize == 0) appState.cState = AppState::CS_TRAILER;
-        
-        // 如果 handlePureMjpegByte 完成了一帧，这里必须立即退出以显示
+        if (chunkSize > 0) chunkSize--;
+        if (chunkSize == 0) cState = CS_TRAILER;
         if (appState.currentState == STATE_DISPLAYING) return;
         break;
 
-      case AppState::CS_TRAILER:
-        if (c == '\n') appState.cState = AppState::CS_SIZE;
+      case CS_TRAILER:
+        if (c == '\n') cState = CS_SIZE;
         break;
     }
-  }
-
-  if (appState.lastAct > 0 && millis() - appState.lastAct > 3000) {
-    client.stop(); appState.lastAct = millis();
   }
 }
 
@@ -1276,12 +1231,22 @@ void loop() {
   // 检查WiFi连接状态
   if (WiFi.status() == WL_CONNECTED) {
     if (!streamClient.connected()) {
-        if (appState.isRestartStream) {
-          initAppState();
-          
-          streamClient.stop();
-          streamHttp.end();
-
+      if (appState.isRestartStream) {
+        appState.isRestartStream = false;
+        
+        // 清除图像尺寸缓存（因为流重启了）
+        appState.sizeCached = false;
+        appState.cachedImgWidth = 0;
+        appState.cachedImgHeight = 0;
+        appState.boundaryFound = false;
+        appState.boundary = "";
+        
+        // 重置缓冲区
+        appState.networkSize = 0;
+        appState.currentState = STATE_RECEIVING;
+        
+        streamClient.stop();
+        streamHttp.end();
         
         // 等待相机完成分辨率切换
         delay(500);
@@ -1289,7 +1254,14 @@ void loop() {
         // 使用原始WiFiClient连接MJPEG流
         Serial.println("Connecting to MJPEG stream...");
         if (streamClient.connect("192.168.4.1", 80)) {
+          // 强制重置解析器内部静态状态机
+          processMjpegStream(streamClient, true);
+          
           // 发送HTTP模拟浏览器请求 (Ref: har-requests.txt)
+
+
+
+
           String request = "GET /api/v1/stream HTTP/1.1\r\n";
           request += "Host: 192.168.4.1\r\n";
           request += "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36\r\n";
@@ -1300,9 +1272,35 @@ void loop() {
           request += "\r\n";
 
           streamClient.print(request);
+          Serial.println("MJPEG stream connected successfully. Syncing handshake...");
+          
+          // 强对齐同步：等待 HTTP 响应头结束 (\r\n\r\n)
+          unsigned long syncStart = millis();
+          String syncBuf = "";
+          bool syncOk = false;
+          while (millis() - syncStart < 3000) {
+            if (streamClient.available()) {
+              char sc = streamClient.read();
+              syncBuf += sc;
+              // 寻找 HTTP 报文体起始标志
+              if (syncBuf.endsWith("\r\n\r\n") || syncBuf.endsWith("\n\n")) {
+                syncOk = true;
+                break;
+              }
+              if (syncBuf.length() > 200) syncBuf = syncBuf.substring(150); 
+            }
+          }
+          
+          if (syncOk) {
+            Serial.println("MJPEG Protocol Body Sync OK.");
+          } else {
+            Serial.println("MJPEG Protocol Sync Timeout. Proceeding anyway...");
+          }
+
+          
           streamClient.setNoDelay(true);
           streamClient.setTimeout(5000);
-          Serial.println("MJPEG stream connected successfully");
+
         } else {
           Serial.println("Failed to connect to MJPEG stream");
           delay(2000);
@@ -1368,9 +1366,25 @@ void loop() {
     if (drawSuccess) {
       canvas.pushSprite(0, 0);
       fpsFrameCount++;
+      appState.consecutiveErrors = 0; // 重置错误计数
+      appState.lastValidSize = (int)appState.networkSize; // 记录上一帧有效载荷大小
     } else {
-      Serial.print("E");
+
+      appState.consecutiveErrors++;
+      uint8_t tail1 = (appState.networkSize >= 2) ? appState.networkBuffer[appState.networkSize-2] : 0;
+      uint8_t tail2 = (appState.networkSize >= 1) ? appState.networkBuffer[appState.networkSize-1] : 0;
+      Serial.printf("E(S:%d,H:%02x%02x,T:%02x%02x)", appState.networkSize, appState.networkBuffer[0], appState.networkBuffer[1], tail1, tail2);
+      
+      // 自愈逻辑：如果连续 15 帧渲染失败，说明流失步严重，强制重连
+      if (appState.consecutiveErrors >= 15) {
+        Serial.println("\n[Auto-Healing] Too many errors, restarting stream...");
+        appState.isRestartStream = true;
+        appState.consecutiveErrors = 0;
+      }
     }
+
+
+
 
     // 强制同步等待
     M5Cardputer.Display.flush();
@@ -1388,10 +1402,11 @@ void loop() {
     currentFps = (float)fpsFrameCount / ((millis() - fpsLastTime) / 1000.0);
     fpsFrameCount = 0;
     fpsLastTime = millis();
-    Serial.printf("FPS: %.1f  FREE: %uKB  Size: %u B\n",
+    Serial.printf("FPS: %.1f  FREE: %uKB  Size: %d B\n",
                   currentFps,
                   ESP.getFreeHeap() / 1024,
-                  (unsigned)appState.networkSize);
+                  appState.lastValidSize);
+
 
   }
 

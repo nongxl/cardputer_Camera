@@ -126,15 +126,20 @@ The application features a heavily optimized MJPEG streaming engine that achieve
 ### Optimization Techniques
 ### 优化技术点
 
-- **Buffered Batch Reading**: Implements a 1024-byte local buffer for `WiFiClient` access, reducing the overhead of thousands of single-byte system calls to a few batch reads per frame.
-- **SOI/EOI Strong Alignment**: The parser actively searches for JPEG Start-Of-Image (`0xFFD8`) and End-Of-Image (`0xFFD9`) markers. This ensures that even if the network stream contains junk bytes or HTTP boundaries, the decoder only receives valid, complete frames.
-- **Robust Chunked Decoding**: A state-machine-based decoder for `Transfer-Encoding: chunked` that maintains exact byte synchronization, preventing stream desync or "frozen" frames.
-- **Backlog Defense**: Automatically detects and handles network congestion by skipping outdated frames and resynchronizing to the latest boundary.
+- **Buffered Batch Reading**: Implemented a 1024-byte local buffer for `WiFiClient` access, significantly reducing system call overhead.
+- **Handshake Body Alignment**: Explicitly syncs to the `\r\n\r\n` header terminator before starting the chunked parser, preventing protocol drift (garbled screens) after reboots.
+- **SOI/EOI Strong Alignment**: Aggressively scans for `0xFFD8` and `0xFFD9` markers to ensure only valid JPEG payloads reach the decoder.
+- **15KB Circuit Breaker**: Discards any illegal frames exceeding 15KB to protect memory from stale stream data.
+- **Self-Healing Reconnection**: Automatically restarts the MJPEG stream and resets the parser after 15 consecutive rendering failures.
+- **Metric Caching**: Persists the last successful frame size in diagnostics to prevent "0 B" flicker.
 
-- **带缓冲的批量读取**：为 `WiFiClient` 访问实现了 1024 字节的局部缓冲区，将每帧成千上万次的单字节系统调用减少为少量批量读取，大幅提升吞吐量。
-- **SOI/EOI 强对齐**：解析器主动搜索 JPEG 的起始旗标（`0xFFD8`）和结束旗标（`0xFFD9`）。这确保了即使网络流中包含杂质字节或 HTTP 边界字符，解码器也只会收到合法、完整的单帧数据。
-- **健壮的分块解码 (Chunked Decoding)**：基于状态机的 `Transfer-Encoding: chunked` 解码器，保持精确的字节同步，防止流不同步或画面“冻结”。
-- **积压防御机制**：自动检测并处理网络拥塞，通过跳过过期帧并重新同步到最新流边界，确保取景的实时性。
+- **带缓冲的批量读取**：为 `WiFiClient` 访问实现了 1024 字节的局部缓冲区，将系统调用次数减少了几个数量级，极大提升了吞吐量。
+- **响应体强对齐 (\r\n\r\n Sync)**：在连接建立后强制检索 HTTP 响应头结束符，确保解析器从第一个真正的分块头开始解码，彻底消除了重启后的“花屏”现象。
+- **SOI/EOI 强对齐**：解析器主动搜索 `0xFFD8` 开头和 `0xFFD9` 结尾，确保即使网络流包含杂质，解码器也只会收到合法的 JPEG 帧。
+- **15KB 局帧熔断**：将单帧上限限制为 15KB，一旦由于流偏移检测到异常大包，立即熔断并复位解析器，清除过期数据堆积。
+- **自愈式重连逻辑**：若连续 15 帧渲染失败，系统会自动重启 MJPEG 流连接并执行状态机全量重置，确保长时间运行的稳定性。
+- **指标静态缓存**：缓存并显示上一帧有效图像的尺寸数据，解决了在统计时 Size 指标频繁跳 0 的误导性问题。
+
 
 ## License
 
