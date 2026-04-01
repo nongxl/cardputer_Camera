@@ -1,0 +1,35 @@
+拍摄动作的流程：停止流→设置高分辨率（/api/v1/control?var=framesize&val=10）→拍摄→设置低分辨率(/api/v1/control?var=framesize&val=7)→恢复流
+
+UnitCamS3-5MP支持的分辨率参数：
+0 96*96
+1 128*128
+6 320*240
+10 640*480
+13 1280*720
+15 JPEG data too large
+16 1920*1080 IMG_19700101_004508.jpg
+17 640*480
+24 JPEG data too large
+25 JPEG data too large
+26 JPEG data too large
+
+尝试以下优化：
+在 SOI 前强制清空状态。
+在 MJPEG 流解析中，
+一旦检测到 SOI（0xFF 0xD8），
+无条件清空当前帧状态、
+jpegIndex = 0、
+丢弃 SOI 之前的所有字节、
+不尝试保留 SOI 之前的任何数据。
+目标是确保 jpegBuffer[0] 一定是 0xFF、
+jpegBuffer[1] 一定是 0xD8。
+这是为了避免 HTTP header / boundary 污染 JPEG 数据
+
+status.txt是这样的{"framesize":6,"quality":0,"brightness":0,"contrast":0,"saturation":0,"sharpness":0,"special_effect":0,"wb_mode":0,"awb":0,"awb_gain":0,"aec":0,"aec2":0,"denoise":0,"ae_level":0,"aec_value":0,"agc":0,"agc_gain":0,"gainceiling":0,"bpc":0,"wpc":0,"raw_gma":0,"lenc":0,"hmirror":0,"vflip":0,"dcw":0,"colorbar":0}
+实现和目前按键0-6切换特效一样的功能——按键向摄像头如下接口发送设置：
+接口 GET /api/v1/control?var=参数名&val=参数值 
+- brightness - 亮度(边界值-2到2)  分别按;（分号，上键）和。（句号，下键）实现亮度调节
+- contrast - 对比度(边界值-2到2) 分别按，（逗号，左键）和/（斜杠，右键键）实现对比度调节
+- saturation - 饱和度(边界值-2到2) 分别按[(左中括号)和]（右中括号）实现饱和度调节
+- sharpness - 锐度(边界值-2到2) 分别按_(下划线)和=（等号）实现锐度调节
+需要从/images/status.txt中读取初始值，设置参数后请求- GET /api/v1/status - 获取摄像头当前状态检查是否生效并更新status.txt
