@@ -99,16 +99,11 @@ void UIManager::showHelp() {
 }
 
 bool UIManager::renderStream() {
-    int jpegW = 0, jpegH = 0;
-    int dispW = M5Cardputer.Display.width();
-    int dispH = M5Cardputer.Display.height();
     bool drawSuccess = false;
     
-    if (MjpegParser::parseJpegSize(appState.networkBuffer, appState.networkSize, jpegW, jpegH)) {
-        int drawX = (dispW - jpegW) / 2;
-        int drawY = (dispH - jpegH) / 2;
-        drawSuccess = canvas.drawJpg(appState.networkBuffer, appState.networkSize, drawX, drawY);
-    }
+    // 使用缓存的偏移量，避免每帧解析 JPEG 头
+    drawSuccess = canvas.drawJpg(appState.networkBuffer, appState.networkSize, 
+                                 appState.cachedDrawX, appState.cachedDrawY);
     
     // FPS & Memory Info Overlay
     static uint32_t lastOverlayUpdate = 0;

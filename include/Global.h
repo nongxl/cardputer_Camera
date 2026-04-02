@@ -31,6 +31,8 @@ typedef struct {
   bool sizeCached;
   int cachedImgWidth;
   int cachedImgHeight;
+  int cachedDrawX;
+  int cachedDrawY;
   
   enum MjpegParseState { P_HTTP_HEADERS, P_BOUNDARY, P_FRAME_HEADERS, P_JPEG_DATA };
   MjpegParseState parseState;

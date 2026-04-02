@@ -55,6 +55,17 @@ void MjpegParser::handleByte(uint8_t c) {
                     appState.networkBuffer[appState.networkSize-1] == 0xD9) {
                     
                     if (appState.networkSize >= 2048) {
+                        // 性能优化：仅在缓存失效时解析分辨率并计算居中偏移
+                        if (!appState.sizeCached) {
+                            int w = 0, h = 0;
+                            if (parseJpegSize(appState.networkBuffer, appState.networkSize, w, h)) {
+                                appState.cachedImgWidth = w;
+                                appState.cachedImgHeight = h;
+                                appState.cachedDrawX = (M5Cardputer.Display.width() - w) / 2;
+                                appState.cachedDrawY = (M5Cardputer.Display.height() - h) / 2;
+                                appState.sizeCached = true;
+                            }
+                        }
                         appState.currentState = STATE_DISPLAYING;
                     } else {
                         appState.networkSize = 0;
