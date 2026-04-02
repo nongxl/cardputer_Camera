@@ -71,7 +71,7 @@ void MjpegParser::handleByte(uint8_t c) {
                         appState.networkSize = 0;
                     }
                     appState.parseState = AppState::P_BOUNDARY;
-                } else if (appState.frameReadCount >= 15000) { // 恢复 15KB 熔断
+                } else if (appState.frameReadCount >= 30000) { // 提高熔断阈值至 30KB
                     appState.networkSize = 0;
                     appState.parseState = AppState::P_BOUNDARY;
                 }
