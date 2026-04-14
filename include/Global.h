@@ -44,6 +44,7 @@ typedef struct {
   String boundary;
   int consecutiveErrors;
   int lastValidSize;
+  uint8_t lastByte;
   char overlayMsg[64];
   uint32_t overlayTimestamp;
 } AppState;

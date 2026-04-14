@@ -39,41 +39,47 @@ void MjpegParser::handleByte(uint8_t c) {
             break;
 
         case AppState::P_JPEG_DATA:
-            if (appState.networkSize == 0) {
-                if (c == 0xFF) appState.networkBuffer[appState.networkSize++] = c;
-            } else if (appState.networkSize == 1) {
-                if (c == 0xD8) appState.networkBuffer[appState.networkSize++] = c;
-                else if (c != 0xFF) appState.networkSize = 0;
-            } else {
-                if (appState.networkSize < GLOBAL_MAX_JPEG_SIZE) {
-                    appState.networkBuffer[appState.networkSize++] = c;
-                }
-                appState.frameReadCount++;
+            {
+                bool isEOI = (appState.lastByte == 0xFF && c == 0xD9);
+                appState.lastByte = c; // 记录上一个字符用于 EOI 识别
 
-                if (appState.networkSize >= 2 && 
-                    appState.networkBuffer[appState.networkSize-2] == 0xFF && 
-                    appState.networkBuffer[appState.networkSize-1] == 0xD9) {
-                    
-                    if (appState.networkSize >= 2048) {
-                        // 性能优化：仅在缓存失效时解析分辨率并计算居中偏移
-                        if (!appState.sizeCached) {
-                            int w = 0, h = 0;
-                            if (parseJpegSize(appState.networkBuffer, appState.networkSize, w, h)) {
-                                appState.cachedImgWidth = w;
-                                appState.cachedImgHeight = h;
-                                // 性能与内存优化：1/2 快速解码已在 UIManager 中配合 1.5x 硬件缩放工作
-                                appState.cachedScale = 0.5f; 
-                                appState.sizeCached = true;
-                            }
-                        }
-                        appState.currentState = STATE_DISPLAYING;
-                    } else {
-                        appState.networkSize = 0;
+                if (appState.networkSize == 0) {
+                    if (c == 0xFF) appState.networkBuffer[appState.networkSize++] = c;
+                } else if (appState.networkSize == 1) {
+                    if (c == 0xD8) appState.networkBuffer[appState.networkSize++] = c;
+                    else if (c != 0xFF) appState.networkSize = 0;
+                } else {
+                    // 仅在容量允许时存入缓冲区
+                    if (appState.networkSize < GLOBAL_MAX_JPEG_SIZE) {
+                        appState.networkBuffer[appState.networkSize++] = c;
                     }
-                    appState.parseState = AppState::P_BOUNDARY;
-                } else if (appState.frameReadCount >= 30000) { // 提高熔断阈值至 30KB
-                    appState.networkSize = 0;
-                    appState.parseState = AppState::P_BOUNDARY;
+                    appState.frameReadCount++;
+
+                    // 识别到结束符 (EOI)
+                    if (isEOI) {
+                        // 只有在数据完整且未溢出的情况下才显示
+                        if (appState.networkSize >= 2048 && appState.networkSize < GLOBAL_MAX_JPEG_SIZE) {
+                            if (!appState.sizeCached) {
+                                int w = 0, h = 0;
+                                if (parseJpegSize(appState.networkBuffer, appState.networkSize, w, h)) {
+                                    appState.cachedImgWidth = w;
+                                    appState.cachedImgHeight = h;
+                                    appState.cachedScale = 0.5f; 
+                                    appState.sizeCached = true;
+                                }
+                            }
+                            appState.currentState = STATE_DISPLAYING;
+                        } else {
+                            // 溢出或数据异常，重置大小准备下一帧
+                            appState.networkSize = 0;
+                        }
+                        appState.parseState = AppState::P_BOUNDARY;
+                    } 
+                    // 熔断保护：防止在极端断流情况下无限等待 (64KB)
+                    else if (appState.frameReadCount >= GLOBAL_MAX_JPEG_SIZE) {
+                        appState.networkSize = 0;
+                        appState.parseState = AppState::P_BOUNDARY;
+                    }
                 }
             }
             break;
