@@ -40,6 +40,48 @@ bool StorageManager::savePhoto(const char* filename, uint8_t* buffer, size_t siz
     return (written == size);
 }
 
+bool StorageManager::saveCanvasAsBmp(M5Canvas& canvas, const char* filename) {
+    int w = canvas.width();
+    int h = canvas.height();
+    int rowSize = (w * 3 + 3) & ~3; // 每行需 4 字节对齐
+    int dataSize = rowSize * h;
+    int fileSize = 54 + dataSize;
+    
+    File file = SD.open(filename, FILE_WRITE);
+    if (!file) return false;
+
+    // 1. BMP Header (14 bytes)
+    uint8_t header[14] = {'B', 'M', 0,0,0,0, 0,0, 0,0, 54,0,0,0};
+    *(uint32_t*)(header + 2) = fileSize;
+    file.write(header, 14);
+
+    // 2. Info Header (40 bytes)
+    uint8_t info[40] = {40,0,0,0, 0,0,0,0, 0,0,0,0, 1,0, 24,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0};
+    *(int32_t*)(info + 4) = w;
+    *(int32_t*)(info + 8) = h; // 正值表示自底向上
+    file.write(info, 40);
+
+    // 3. Pixel Data (BGR888, Bottom-up)
+    uint8_t* rowBuf = (uint8_t*)malloc(rowSize);
+    if (!rowBuf) { file.close(); return false; }
+    
+    for (int y = h - 1; y >= 0; y--) {
+        memset(rowBuf, 0, rowSize);
+        for (int x = 0; x < w; x++) {
+            uint16_t c = canvas.readPixel(x, y);
+            // RGB565 -> BGR888
+            rowBuf[x * 3 + 2] = ((c >> 11) & 0x1F) << 3; // R
+            rowBuf[x * 3 + 1] = ((c >> 5)  & 0x3F) << 2; // G
+            rowBuf[x * 3 + 0] = (c         & 0x1F) << 3; // B
+        }
+        file.write(rowBuf, rowSize);
+    }
+    
+    free(rowBuf);
+    file.close();
+    return true;
+}
+
 bool StorageManager::saveCameraStatus(const String& statusJson) {
     File file = SD.open("/camera_status.json", FILE_WRITE);
     if (file) {

@@ -30,7 +30,8 @@ enum InputEvent {
   EVENT_FILTER_GAMEBOY,   // 按键7 → GameBoy风滤镜
   EVENT_FILTER_PIXELATE,  // 按键8 → 像素风滤镜
   EVENT_FILTER_GLITCH,    // 按键9 → 故障风滤镜
-  EVENT_FILTER_OFF        // 按键7/8/9再按一次关闭（同键切换逻辑由main处理）
+  EVENT_FILTER_OFF,       // 按键7/8/9再按一次关闭
+  EVENT_WIFI_SERVER       // 按键W → 开启 WiFi 文件传输模式
 };
 
 class InputHandler {

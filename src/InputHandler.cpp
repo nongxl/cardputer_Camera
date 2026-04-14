@@ -15,6 +15,7 @@ InputEvent InputHandler::handle() {
         if (M5Cardputer.Keyboard.isKeyPressed('t')) return EVENT_TIMELAPSE;
         if (M5Cardputer.Keyboard.isKeyPressed('`')) return EVENT_STATUS;
         if (M5Cardputer.Keyboard.isKeyPressed('h')) return EVENT_HELP;
+        if (M5Cardputer.Keyboard.isKeyPressed('w')) return EVENT_WIFI_SERVER;
         
         // 滤镜切换：7=GameBoy, 8=Pixelate, 9=Glitch
         if (M5Cardputer.Keyboard.isKeyPressed('7')) return EVENT_FILTER_GAMEBOY;

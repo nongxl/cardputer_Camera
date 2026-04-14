@@ -11,6 +11,7 @@ public:
     static bool init();
     static bool isReady() { return isSDInitialized; }
     static bool savePhoto(const char* filename, uint8_t* buffer, size_t size);
+    static bool saveCanvasAsBmp(M5Canvas& canvas, const char* filename);
     static bool saveCameraStatus(const String& statusJson);
     static bool loadCameraStatus(JsonDocument& doc);
     static bool createDirectory(const char* path);

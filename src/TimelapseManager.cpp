@@ -30,21 +30,19 @@ bool TimelapseManager::start() {
     
     isTimelapseMode = true;
     photoCount = 0;
-    lastShotTime = millis();
+    lastShotTime = 0; // 标记立即首拍
     startTime = millis();
     lastActionTime = millis();
     isScreenOff = false;
     
     UIManager::clear();
-    UIManager::displayLine("Timelapse Mode Started");
-    delay(1000);
     return true;
 }
 
 void TimelapseManager::stop() {
     isTimelapseMode = false;
     isScreenOff = false;
-    if (isScreenOff) M5Cardputer.Display.wakeup();
+    M5Cardputer.Display.wakeup();
     
     CameraClient::setResolution(CAMERA_RESOLUTION_LOW);
     CameraClient::setQuality(CAMERA_QUALITY_STREAM);
@@ -74,11 +72,11 @@ void TimelapseManager::update() {
     
     // Display
     if (!isScreenOff) {
-        UIManager::renderTimelapse(photoCount, lastShotTime, interval);
+        UIManager::renderTimelapse(photoCount, lastShotTime == 0 ? millis() : lastShotTime, interval);
     }
     
-    // Trigger Capture
-    if (millis() - lastShotTime >= interval) {
+    // Trigger Capture (First Shot or Interval)
+    if (lastShotTime == 0 || millis() - lastShotTime >= interval) {
         capture();
     }
 }
@@ -87,13 +85,13 @@ bool TimelapseManager::capture() {
     char filename[128];
     sprintf(filename, "%s/IMG_%04d.jpg", currentDir.c_str(), photoCount + 1);
     
-    CameraClient::triggerCapture();
-    delay(500); // Wait for camera
+    // 我们直接调用 downloadPhoto，它内部会请求 /capture 触发拍照。
+    // 移除冗余的 triggerCapture 和 delay(500)
     if (CameraClient::downloadPhoto(filename)) {
         photoCount++;
         lastShotTime = millis();
         return true;
     }
-    lastShotTime = millis(); // Reset even if failed to avoid loop
+    lastShotTime = millis(); // 即使失败也重置，防止请求风暴
     return false;
 }

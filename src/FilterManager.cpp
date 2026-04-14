@@ -187,7 +187,6 @@ void FilterManager::applyPixelate(M5Canvas& canvas, int x, int y, int w, int h) 
 // 使用 LCG 快速伪随机，避免 rand()
 // ═══════════════════════════════════════════════════════════════
 void FilterManager::applyGlitch(M5Canvas& canvas, int x, int y, int w, int h) {
-    // 极简 LCG 随机数
     static uint32_t seed = 42;
     auto lcg = [&]() -> uint32_t {
         seed = seed * 1664525u + 1013904223u;
@@ -196,64 +195,72 @@ void FilterManager::applyGlitch(M5Canvas& canvas, int x, int y, int w, int h) {
 
     int endX = x + w;
     int endY = y + h;
-
-    // ── A：水平行随机偏移 ────────────────────────────────────
-    // 对约 20% 的行做水平平移
-    // 使用临时行缓冲（静态，节省堆空间）
-    static uint16_t rowBuf[240]; // 行缓存（最大拍摄宽度 240，实际截图宽度）
-    // 实际宽度
-    int line_w = (w < 240) ? w : 240;
+    
+    // 修正：将缓冲区扩大至 320 像素，确保支持 240 高清后期处理而不发生溢出
+    static uint16_t rowBuf[320]; 
+    if (w > 320) w = 320; // 边界安全保护
+    
+    // 随机全屏闪烁概率（反色或白闪）
+    uint32_t globalRnd = lcg();
+    bool doInvert = (globalRnd % 100 == 0); 
 
     for (int py = y; py < endY; py++) {
         uint32_t rnd = lcg();
-        // 概率触发本行偏移
-        if ((rnd & 0xFF) > CONFIG_GLITCH_ROW_ODDS) continue;
-
-        int shift = (int)(rnd >> 8 & CONFIG_GLITCH_ROW_SHIFT_MASK) + 1; // 偏移量
-
-        int dir   = (rnd >> 4) & 1;             // 0=左 1=右
-
-        // 读取整行到缓冲，并同时执行色彩强化
-        for (int px = x; px < x + line_w; px++) {
-            rowBuf[px - x] = boostVibrance(canvas.readPixel(px, py));
+        
+        // 1. 基础读取与色彩强化
+        for (int i = 0; i < w; i++) {
+            rowBuf[i] = boostVibrance(canvas.readPixel(x + i, py));
+            if (doInvert) rowBuf[i] = ~rowBuf[i];
         }
 
-        // 写回（带偏移，环绕）
-        for (int i = 0; i < line_w; i++) {
-            int srcIdx;
-            if (dir == 0) {
-                srcIdx = (i + shift) % line_w;          // 左移
+        // 2. 确定当前行的“病态”程度
+        bool hasJitter = (rnd % 100 < 15);     // 15% 概率产生行位移
+        bool hasColorSplit = (rnd % 100 < 35); // 35% 概率产生色散
+        bool isScanline = (py % 2 == 0);       // CRT 隔行扫描暗线
+
+        int shift = hasJitter ? (int)((rnd >> 8) % 6u) - 3 : 0; // -3 ~ +3 像素微抖动
+        int split = hasColorSplit ? (int)((rnd >> 12) % 4u) + 1 : 0; // 1 ~ 4 像素色散
+
+        // 3. 像素合成处理回写
+        for (int i = 0; i < w; i++) {
+            int srcIdx = (i + shift + w) % w;
+            uint16_t finalColor;
+
+            if (hasColorSplit) {
+                // 色散合成：取左侧像素的 R，当前像素的 G，右侧像素的 B
+                int rIdx = (srcIdx + split) % w;
+                int bIdx = (srcIdx - split + w) % w;
+                
+                uint16_t cR = rowBuf[rIdx];
+                uint16_t cG = rowBuf[srcIdx];
+                uint16_t cB = rowBuf[bIdx];
+
+                // 提取分量并组合 (RGB565: R5 G6 B5)
+                finalColor = (cR & 0xF800) | (cG & 0x07E0) | (cB & 0x001F);
             } else {
-                srcIdx = (i - shift + line_w) % line_w; // 右移
+                finalColor = rowBuf[srcIdx];
             }
-            canvas.drawPixel(x + i, py, rowBuf[srcIdx]);
+
+            // 4. 应用扫描线暗化效果 (亮度降低 25%)
+            if (isScanline) {
+                finalColor = ((finalColor & 0xF800) >> 1 & 0xF800) | 
+                             ((finalColor & 0x07E0) >> 1 & 0x07E0) | 
+                             ((finalColor & 0x001F) >> 1 & 0x001F);
+            }
+
+            canvas.drawPixel(x + i, py, finalColor);
         }
-    }
 
-    // ── B：红色通道横向错位 ──────────────────────────────────
-    // 选一条随机水平带（高度约1/6～1/4），对红色通道做+N列偏移
-    {
-        uint32_t rnd2 = lcg();
-        int bandStart = y + (int)(rnd2 % (uint32_t)h);
-        int bandH     = 1 + (int)((lcg() >> 2) % 8u);   // 1~8 行高
-        if (bandStart + bandH > endY) bandH = endY - bandStart;
-        int redShift  = 2 + (int)((lcg() >> 3) % CONFIG_GLITCH_RED_SHIFT_MOD);   // 红色错位幅度
-
-        for (int py = bandStart; py < bandStart + bandH; py++) {
-            for (int px = x; px < endX; px++) {
-                // 读取并强化当前像素与移位像素的色彩
-                uint16_t c = boostVibrance(canvas.readPixel(px, py));
-                int srcX = px + redShift;
-                if (srcX >= endX) srcX = endX - 1;
-                uint16_t cR = boostVibrance(canvas.readPixel(srcX, py));
-
-                int r0, g0, b0, rR, gR, bR;
-                rgb565Split(c,  r0, g0, b0);
-                rgb565Split(cR, rR, gR, bR);
-
-                // 混合：用 cR 的红色通道替换原像素
-                canvas.drawPixel(px, py, rgb565Merge(rR, g0, b0));
+        // 5. 随机大块水平撕裂（覆盖层）
+        if (rnd % 500 == 0) {
+            int tearLen = (int)((lcg() >> 4) % 20u) + 5;
+            int tearOffset = (int)((lcg() >> 8) % 15u) - 7;
+            for(int i=0; i<w; i++) {
+                int si = (i + tearOffset + w) % w;
+                canvas.drawPixel(x + i, py, rowBuf[si]);
             }
+            // 撕裂行多处理几次增加厚度
+            if (py + 1 < endY) py++; 
         }
     }
 }

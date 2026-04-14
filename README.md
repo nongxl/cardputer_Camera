@@ -13,10 +13,14 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 
 - **MJPEG Streaming**: Real-time camera feed display
 - **Image Capture**: High-quality photo taking
+- **WiFi File Transfer**: Access photos via browser over hotspot
+- **Software Filters**: Creative effects like GameBoy, Glitch, etc.
 - **SD Card Storage**: Save captured images to storage
 
 - **MJPEG串流**：实时相机画面显示
 - **图像捕获**：高质量照片拍摄
+- **WiFi 文件传输**：通过热点在浏览器中直接下载照片
+- **软件创意滤镜**：支持 GameBoy、像素、故障风等特效
 - **SD卡存储**：将捕获的图像保存到储存卡
 
 ## Hardware Requirements
@@ -59,8 +63,9 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
     - **Burst Mode**: Long press `BtnA` (> 0.5s) to capture high-resolution photos every 0.2s.
 8. Press `0`-`6` number keys to set built-in camera special effect
 9. Press `7`, `8`, or `9` to toggle Software Creative Filters (GameBoy, Pixelate, Glitch). Press the same key again to turn off.
-10. Press `` ` `` (backtick) to view camera status and parameter settings
-11. Adjust camera parameters using keyboard:
+10. Press `w` to enable **WiFi File Transfer Mode**. Connect to `Cardputer-Cam` and visit `http://192.168.4.1` on your phone to download images.
+11. Press `` ` `` (backtick) to view camera status and parameter settings
+12. Adjust camera parameters using keyboard:
 
 1. 将M5Cardputer连接到电脑
 2. 使用PlatformIO构建并上传项目
@@ -73,8 +78,9 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
     - **连拍模式**：长按 `BtnA` 按钮（>0.5秒），每0.2秒自动拍摄一张。
 8. 按数字键 `0`-`6` 设置硬件内置特效
 9. 按 `7`、`8` 或 `9` 切换软件创意滤镜（GameBoy风、像素风、故障风），同键再按即可关闭。
-10. 按 `` ` ``（反引号）查看相机状态和参数设置
-11. 使用键盘调整相机参数：
+10. 按 `w` 键开启 **WiFi 无线传图模式**。连接 `Cardputer-Cam` 热点后，手机访问 `http://192.168.4.1` 即可预览下载照片。
+11. 按 `` ` ``（反引号）查看相机状态和参数设置
+12. 使用键盘调整相机参数：
 
 ### Camera Parameter Controls
 ### 相机参数控制
@@ -87,7 +93,8 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 | Saturation 饱和度 | `]` (right bracket) | `[` (left bracket) | -2 to 2 |
 | Sharpness 锐度 | `=` (equals) | `_` (underscore) | -2 to 2 |
 | Special Effect 内置特效 | `0-6` (number keys) | - | 0 to 6 |
-| Creative Filter 创意滤镜 | `7`,`8`,`9` (Hardware Keys) | - | Toggle (同键开关) |
+| Creative Filter 创意滤镜 | `7`,`8`,`9` | - | Toggle (同键开关) |
+| WiFi Transfer 传图模式 | `w` | - | Toggle (AP Mode) |
 
 ### Timelapse Mode
 ### 延时摄影模式

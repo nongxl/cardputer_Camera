@@ -8,6 +8,7 @@
 #include "InputHandler.h"
 #include "TimelapseManager.h"
 #include "FilterManager.h"
+#include "WiFiServerManager.h"
 
 // 流控制
 WiFiClient streamClient;
@@ -19,7 +20,7 @@ int fpsFrameCount = 0;
 // 相机参数变更后异步刷新 status.txt
 static bool pendingStatusRefresh = false;
 static unsigned long lastParamChangeTime = 0;
-const unsigned long STATUS_REFRESH_DELAY = 1000; // 1秒后刷新
+const unsigned long STATUS_REFRESH_DELAY = 500; // 0.5秒后刷新
 
 void setup() {
     M5Cardputer.begin();
@@ -67,15 +68,19 @@ void loop() {
             if (CameraClient::getStatus(status)) {
                 StorageManager::saveCameraStatus(status);
                 UIManager::showStatus(status);
-                while (!InputHandler::handle()) { M5Cardputer.update(); delay(10); }
                 UIManager::clear();
+                streamClient.stop();
+                delay(50); // 稳定性缓冲
+                appState.isRestartStream = true;
             }
             break;
         }
         case EVENT_HELP: {
             UIManager::showHelp();
-            while (!InputHandler::handle()) { M5Cardputer.update(); delay(10); }
             UIManager::clear();
+            streamClient.stop();
+            delay(50); // 稳定性缓冲
+            appState.isRestartStream = true;
             break;
         }
         case EVENT_BRIGHTNESS_UP:   if (currentBrightness < 2)  { CameraClient::setParameter("brightness", ++currentBrightness); pendingStatusRefresh = true; lastParamChangeTime = millis(); } break;
@@ -110,6 +115,46 @@ void loop() {
             snprintf(appState.overlayMsg, sizeof(appState.overlayMsg),
                      next == FILTER_NONE ? "Filter: OFF" : "Filter: Glitch");
             appState.overlayTimestamp = millis();
+            break;
+        }
+        case EVENT_WIFI_SERVER: {
+            serialPrintf("Entering WiFi Server Mode...\n");
+            // 1. 停止当前所有流与连接
+            streamClient.stop();
+            
+            // 2. 准备 UI 
+            UIManager::showWiFiPortal();
+            delay(300); // 防抖，防止进入瞬间检测到按键未释放又退出了
+            
+            // 3. 开启服务器
+            WiFiServerManager::begin();
+            
+            // 4. 阻塞循环，直到再次按下 W
+            bool exitPortal = false;
+            while (!exitPortal) {
+                M5Cardputer.update();
+                WiFiServerManager::loop();
+                if (InputHandler::handle() == EVENT_WIFI_SERVER) {
+                    exitPortal = true;
+                }
+                delay(10);
+            }
+            
+            // 5. 关闭服务器并恢复
+            serialPrintf("Exiting WiFi Mode...\n");
+            WiFiServerManager::stop();
+            UIManager::displayLine("WiFi Server Stopped", true);
+            
+            // 6. 重新初始化相机 WiFi
+            UIManager::displayLine("Reconnecting to Camera...");
+            WiFi.begin("UnitCamS3-WiFi", "");
+            int retry = 0;
+            while (WiFi.status() != WL_CONNECTED && retry < 20) {
+                delay(500);
+                retry++;
+            }
+            appState.isRestartStream = true;
+            UIManager::clear();
             break;
         }
         default:
@@ -158,6 +203,10 @@ void loop() {
             if (CameraClient::downloadPhoto(filename)) {
                 snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "Saved: %lu", millis());
                 appState.overlayTimestamp = millis();
+                // 创意滤镜后期处理
+                if (FilterManager::getFilter() != FILTER_NONE) {
+                    UIManager::processAndSaveFilteredPhoto(filename);
+                }
             }
         }
         CameraClient::setResolution(CAMERA_RESOLUTION_LOW);
