@@ -31,6 +31,7 @@ typedef struct {
   bool sizeCached;
   int cachedImgWidth;
   int cachedImgHeight;
+  float cachedScale;
   int cachedDrawX;
   int cachedDrawY;
   
@@ -59,5 +60,9 @@ extern float currentFps;
 
 // 辅助工具
 void serialPrintf(const char* format, ...);
+
+// FilterManager 在 Global.h 之后 include（避免循环依赖，通过前置声明）
+// currentFilter 定义在 FilterManager.cpp，此处作为全局变量转发
+// 注：FilterMode 类型定义在 FilterManager.h，使用者需单独 include FilterManager.h
 
 #endif // GLOBAL_H

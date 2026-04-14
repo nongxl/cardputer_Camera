@@ -57,9 +57,10 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 7. Capture photos (saved to SD card):
     - **Single Shot**: Short press `BtnA` to capture a high-resolution photo.
     - **Burst Mode**: Long press `BtnA` (> 0.5s) to capture high-resolution photos every 0.2s.
-8. Press 0-6 number keys to set special effect filter
-9. Press ` (backtick) to view camera status and parameter settings
-10. Adjust camera parameters using keyboard:
+8. Press `0`-`6` number keys to set built-in camera special effect
+9. Press `7`, `8`, or `9` to toggle Software Creative Filters (GameBoy, Pixelate, Glitch). Press the same key again to turn off.
+10. Press `` ` `` (backtick) to view camera status and parameter settings
+11. Adjust camera parameters using keyboard:
 
 1. 将M5Cardputer连接到电脑
 2. 使用PlatformIO构建并上传项目
@@ -70,9 +71,10 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 7. 拍摄照片（保存到SD卡）：
     - **单张拍摄**：短按 `BtnA` 按钮。
     - **连拍模式**：长按 `BtnA` 按钮（>0.5秒），每0.2秒自动拍摄一张。
-8. 按数字键0-6设置特效滤镜
-9. 按`（反引号）查看相机状态和参数设置
-10. 使用键盘调整相机参数：
+8. 按数字键 `0`-`6` 设置硬件内置特效
+9. 按 `7`、`8` 或 `9` 切换软件创意滤镜（GameBoy风、像素风、故障风），同键再按即可关闭。
+10. 按 `` ` ``（反引号）查看相机状态和参数设置
+11. 使用键盘调整相机参数：
 
 ### Camera Parameter Controls
 ### 相机参数控制
@@ -84,7 +86,8 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 | Contrast 对比度 | `/` (slash) | `,` (comma) | -2 to 2 |
 | Saturation 饱和度 | `]` (right bracket) | `[` (left bracket) | -2 to 2 |
 | Sharpness 锐度 | `=` (equals) | `_` (underscore) | -2 to 2 |
-| Special Effect 特效 | `0-6` (number keys) | - | 0 to 6 |
+| Special Effect 内置特效 | `0-6` (number keys) | - | 0 to 6 |
+| Creative Filter 创意滤镜 | `7`,`8`,`9` (Hardware Keys) | - | Toggle (同键开关) |
 
 ### Timelapse Mode
 ### 延时摄影模式

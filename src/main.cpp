@@ -7,6 +7,7 @@
 #include "UIManager.h"
 #include "InputHandler.h"
 #include "TimelapseManager.h"
+#include "FilterManager.h"
 
 // 流控制
 WiFiClient streamClient;
@@ -14,6 +15,11 @@ unsigned long lastDisplayTime = 0;
 const unsigned long minFrameInterval = 10;
 unsigned long fpsLastTime = 0;
 int fpsFrameCount = 0;
+
+// 相机参数变更后异步刷新 status.txt
+static bool pendingStatusRefresh = false;
+static unsigned long lastParamChangeTime = 0;
+const unsigned long STATUS_REFRESH_DELAY = 1000; // 1秒后刷新
 
 void setup() {
     M5Cardputer.begin();
@@ -72,14 +78,40 @@ void loop() {
             UIManager::clear();
             break;
         }
-        case EVENT_BRIGHTNESS_UP: if (currentBrightness < 2) CameraClient::setParameter("brightness", ++currentBrightness); break;
-        case EVENT_BRIGHTNESS_DOWN: if (currentBrightness > -2) CameraClient::setParameter("brightness", --currentBrightness); break;
-        case EVENT_CONTRAST_UP: if (currentContrast < 2) CameraClient::setParameter("contrast", ++currentContrast); break;
-        case EVENT_CONTRAST_DOWN: if (currentContrast > -2) CameraClient::setParameter("contrast", --currentContrast); break;
-        case EVENT_SATURATION_UP: if (currentSaturation < 2) CameraClient::setParameter("saturation", ++currentSaturation); break;
-        case EVENT_SATURATION_DOWN: if (currentSaturation > -2) CameraClient::setParameter("saturation", --currentSaturation); break;
-        case EVENT_SHARPNESS_UP: if (currentSharpness < 2) CameraClient::setParameter("sharpness", ++currentSharpness); break;
-        case EVENT_SHARPNESS_DOWN: if (currentSharpness > -2) CameraClient::setParameter("sharpness", --currentSharpness); break;
+        case EVENT_BRIGHTNESS_UP:   if (currentBrightness < 2)  { CameraClient::setParameter("brightness", ++currentBrightness); pendingStatusRefresh = true; lastParamChangeTime = millis(); } break;
+        case EVENT_BRIGHTNESS_DOWN: if (currentBrightness > -2) { CameraClient::setParameter("brightness", --currentBrightness); pendingStatusRefresh = true; lastParamChangeTime = millis(); } break;
+        case EVENT_CONTRAST_UP:     if (currentContrast < 2)    { CameraClient::setParameter("contrast",   ++currentContrast);   pendingStatusRefresh = true; lastParamChangeTime = millis(); } break;
+        case EVENT_CONTRAST_DOWN:   if (currentContrast > -2)   { CameraClient::setParameter("contrast",   --currentContrast);   pendingStatusRefresh = true; lastParamChangeTime = millis(); } break;
+        case EVENT_SATURATION_UP:   if (currentSaturation < 2)  { CameraClient::setParameter("saturation", ++currentSaturation); pendingStatusRefresh = true; lastParamChangeTime = millis(); } break;
+        case EVENT_SATURATION_DOWN: if (currentSaturation > -2) { CameraClient::setParameter("saturation", --currentSaturation); pendingStatusRefresh = true; lastParamChangeTime = millis(); } break;
+        case EVENT_SHARPNESS_UP:    if (currentSharpness < 2)   { CameraClient::setParameter("sharpness",  ++currentSharpness);  pendingStatusRefresh = true; lastParamChangeTime = millis(); } break;
+        case EVENT_SHARPNESS_DOWN:  if (currentSharpness > -2)  { CameraClient::setParameter("sharpness",  --currentSharpness);  pendingStatusRefresh = true; lastParamChangeTime = millis(); } break;
+        
+        // 滤镜切换:同一按键再按则关闭滤镜
+        case EVENT_FILTER_GAMEBOY: {
+            FilterMode next = (FilterManager::getFilter() == FILTER_GAMEBOY) ? FILTER_NONE : FILTER_GAMEBOY;
+            FilterManager::setFilter(next);
+            snprintf(appState.overlayMsg, sizeof(appState.overlayMsg),
+                     next == FILTER_NONE ? "Filter: OFF" : "Filter: GameBoy");
+            appState.overlayTimestamp = millis();
+            break;
+        }
+        case EVENT_FILTER_PIXELATE: {
+            FilterMode next = (FilterManager::getFilter() == FILTER_PIXELATE) ? FILTER_NONE : FILTER_PIXELATE;
+            FilterManager::setFilter(next);
+            snprintf(appState.overlayMsg, sizeof(appState.overlayMsg),
+                     next == FILTER_NONE ? "Filter: OFF" : "Filter: Pixelate");
+            appState.overlayTimestamp = millis();
+            break;
+        }
+        case EVENT_FILTER_GLITCH: {
+            FilterMode next = (FilterManager::getFilter() == FILTER_GLITCH) ? FILTER_NONE : FILTER_GLITCH;
+            FilterManager::setFilter(next);
+            snprintf(appState.overlayMsg, sizeof(appState.overlayMsg),
+                     next == FILTER_NONE ? "Filter: OFF" : "Filter: Glitch");
+            appState.overlayTimestamp = millis();
+            break;
+        }
         default:
             if (ev >= EVENT_EFFECT_START && ev < EVENT_EFFECT_START + 7) {
                 CameraClient::setSpecialEffect(ev - EVENT_EFFECT_START);
@@ -180,5 +212,20 @@ void loop() {
         currentFps = fpsFrameCount;
         fpsFrameCount = 0;
         fpsLastTime = millis();
+    }
+    
+    // 相机参数变更后延迟刷新状态到 /images/status.txt
+    if (pendingStatusRefresh && isSDInitialized &&
+        millis() - lastParamChangeTime >= STATUS_REFRESH_DELAY) {
+        pendingStatusRefresh = false;
+        String newStatus;
+        if (CameraClient::getStatus(newStatus)) {
+            // 写入 /images/status.txt（doc.txt 要求路径）
+            File sf = SD.open("/images/status.txt", FILE_WRITE);
+            if (sf) { sf.print(newStatus); sf.close(); }
+            // 同步写主状态文件
+            StorageManager::saveCameraStatus(newStatus);
+            serialPrintf("[Status] Refreshed status.txt after param change\n");
+        }
     }
 }

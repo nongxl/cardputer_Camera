@@ -16,6 +16,11 @@ InputEvent InputHandler::handle() {
         if (M5Cardputer.Keyboard.isKeyPressed('`')) return EVENT_STATUS;
         if (M5Cardputer.Keyboard.isKeyPressed('h')) return EVENT_HELP;
         
+        // 滤镜切换：7=GameBoy, 8=Pixelate, 9=Glitch
+        if (M5Cardputer.Keyboard.isKeyPressed('7')) return EVENT_FILTER_GAMEBOY;
+        if (M5Cardputer.Keyboard.isKeyPressed('8')) return EVENT_FILTER_PIXELATE;
+        if (M5Cardputer.Keyboard.isKeyPressed('9')) return EVENT_FILTER_GLITCH;
+        
         for (int i = 0; i <= 6; i++) {
             if (M5Cardputer.Keyboard.isKeyPressed('0' + i)) return (InputEvent)(EVENT_EFFECT_START + i);
         }

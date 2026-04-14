@@ -61,8 +61,8 @@ void MjpegParser::handleByte(uint8_t c) {
                             if (parseJpegSize(appState.networkBuffer, appState.networkSize, w, h)) {
                                 appState.cachedImgWidth = w;
                                 appState.cachedImgHeight = h;
-                                appState.cachedDrawX = (M5Cardputer.Display.width() - w) / 2;
-                                appState.cachedDrawY = (M5Cardputer.Display.height() - h) / 2;
+                                // 性能与内存优化：1/2 快速解码已在 UIManager 中配合 1.5x 硬件缩放工作
+                                appState.cachedScale = 0.5f; 
                                 appState.sizeCached = true;
                             }
                         }
