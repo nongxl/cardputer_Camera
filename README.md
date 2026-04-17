@@ -159,4 +159,4 @@ The application features a heavily optimized MJPEG streaming engine that achieve
 
 ## 许可证
 
-MIT
+PolyForm Noncommercial License 1.0.0
