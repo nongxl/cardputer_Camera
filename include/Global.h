@@ -26,12 +26,17 @@
 #define M5_COLOR_WHITE    0xFFFF  // 纯白
 #define M5_COLOR_BLACK    0x0000  // 纯黑
 
-// UI 配色标准重映射
-#define UI_COLOR_TITLE   M5_COLOR_YELLOW
-#define UI_COLOR_TEXT    M5_COLOR_WHITE
-#define UI_COLOR_ACCENT  M5_COLOR_ORANGE
-#define UI_COLOR_BG      M5_COLOR_DARK_BG
-#define UI_COLOR_BAR_BG  M5_COLOR_CARD_BG
+// 统一 UI 语义 Design Tokens
+#define UI_COLOR_BG         M5_COLOR_DARK_BG  // 全屏主背景 (0x10A2)
+#define UI_COLOR_SURFACE    M5_COLOR_CARD_BG  // 卡片/交替行背景 (0x2128)
+#define UI_COLOR_HEADER_BG  M5_COLOR_ORANGE   // 标头 Header 背景 (亮橙)
+#define UI_COLOR_HEADER_TXT M5_COLOR_BLACK    // 标头 Header 文字 (纯黑)
+#define UI_COLOR_SELECT_BG  M5_COLOR_YELLOW   // 选中项/最新日志背景 (亮黄)
+#define UI_COLOR_SELECT_TXT M5_COLOR_BLACK    // 选中项/最新日志文字 (纯黑)
+#define UI_COLOR_BORDER     M5_COLOR_CYAN     // 弹窗边框/分割线/准星 (电光青)
+#define UI_COLOR_TEXT_MAIN  M5_COLOR_WHITE    // 普通正文说明文字 (纯白)
+#define UI_COLOR_METRIC     M5_COLOR_GREEN    // 监控读数/进度条 (荧光绿)
+#define UI_COLOR_ALERT      M5_COLOR_PINK     // 捕获提示/异常 Overlays (霓虹粉)
 
 // 状态机定义
 enum StreamState {

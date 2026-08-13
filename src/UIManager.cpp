@@ -41,9 +41,9 @@ void UIManager::displayLine(String line, bool reset) {
         logHistory.erase(logHistory.begin());
     }
     
-    mainCanvas->fillSprite(M5_COLOR_DARK_BG);
+    mainCanvas->fillSprite(UI_COLOR_BG);
     
-    // 1. 上半部分：炫彩手机级开机 Banner & 流光动画
+    // 1. 上半部分：统一 Header Banner & 动态流光
     uint16_t rainbowColors[] = { M5_COLOR_ORANGE, M5_COLOR_YELLOW, M5_COLOR_CYAN, M5_COLOR_PINK, M5_COLOR_GREEN };
     int numColors = 5;
     uint32_t elapsed = millis() - bootStartTime;
@@ -58,40 +58,40 @@ void UIManager::displayLine(String line, bool reset) {
         mainCanvas->drawCircle(centerX, centerY, radius, color);
     }
     
-    // 贴纸 Logo Banner (M5 CARDPUTER CAM)
+    // 贴纸 Logo Banner (统一 UI_COLOR_HEADER_BG 亮橙底 + 纯黑字)
     int bannerX = 54;
     int bannerY = 16;
     int bannerW = 150;
     int bannerH = 22;
-    mainCanvas->fillRect(bannerX, bannerY, bannerW, bannerH, M5_COLOR_ORANGE);
-    mainCanvas->drawRect(bannerX - 1, bannerY - 1, bannerW + 2, bannerH + 2, M5_COLOR_YELLOW);
-    mainCanvas->setTextColor(M5_COLOR_BLACK);
+    mainCanvas->fillRect(bannerX, bannerY, bannerW, bannerH, UI_COLOR_HEADER_BG);
+    mainCanvas->drawRect(bannerX - 1, bannerY - 1, bannerW + 2, bannerH + 2, UI_COLOR_SELECT_BG);
+    mainCanvas->setTextColor(UI_COLOR_HEADER_TXT);
     mainCanvas->setTextSize(1);
     mainCanvas->setCursor(bannerX + 12, bannerY + 7);
     mainCanvas->print("M5 CARDPUTER CAM");
     
-    // 右上角旋转 Spinner 字符指示器
+    // 右上角 Spinner
     const char* spinChars[] = { "|", "/", "-", "\\" };
-    mainCanvas->setTextColor(M5_COLOR_CYAN);
+    mainCanvas->setTextColor(UI_COLOR_BORDER);
     mainCanvas->setCursor(215, 23);
     mainCanvas->print(spinChars[step % 4]);
 
-    // 分割贴纸 Line
-    mainCanvas->fillRect(10, 52, 220, 2, M5_COLOR_CYAN);
+    // 分割线 (统一 UI_COLOR_BORDER 电光青)
+    mainCanvas->fillRect(10, 52, 220, 2, UI_COLOR_BORDER);
 
     // 2. 下半部分：实地并发开机日志 Terminal
     for (size_t i = 0; i < logHistory.size(); i++) {
         int yPos = 58 + i * 13;
         if (i == logHistory.size() - 1) {
-            // 当前最新正在执行的阶段（亮黄底卡片高亮）
-            mainCanvas->fillRect(10, yPos - 1, 220, 12, M5_COLOR_CARD_BG);
-            mainCanvas->drawRect(10, yPos - 1, 220, 12, M5_COLOR_YELLOW);
-            mainCanvas->setTextColor(M5_COLOR_YELLOW);
+            // 当前最新正在执行的阶段（统一亮黄底 + 纯黑字卡片高亮）
+            mainCanvas->fillRect(10, yPos - 1, 220, 12, UI_COLOR_SURFACE);
+            mainCanvas->drawRect(10, yPos - 1, 220, 12, UI_COLOR_SELECT_BG);
+            mainCanvas->setTextColor(UI_COLOR_SELECT_BG);
             mainCanvas->setCursor(14, yPos + 1);
             mainCanvas->printf("> %s", logHistory[i].c_str());
         } else {
             // 历史步骤
-            mainCanvas->setTextColor(M5_COLOR_WHITE);
+            mainCanvas->setTextColor(UI_COLOR_TEXT_MAIN);
             mainCanvas->setCursor(18, yPos + 1);
             mainCanvas->printf("  %s", logHistory[i].c_str());
         }
@@ -102,7 +102,6 @@ void UIManager::displayLine(String line, bool reset) {
         mainCanvas->fillRect(c * 48, 132, 48, 3, rainbowColors[(c + step) % numColors]);
     }
     
-    // 推送至屏幕，彻底告别黑屏
     mainCanvas->pushSprite(&M5Cardputer.Display, 0, 0);
 }
 
@@ -116,10 +115,10 @@ void UIManager::drawCaptureOverlay() {
         int boxX = 6;
         int boxY = 116;
         
-        // M5 贴纸胶囊底框：粉紫背景 + 鲜黄双边框
-        mainCanvas->fillRect(boxX, boxY, boxW, boxH, M5_COLOR_PINK);
-        mainCanvas->drawRect(boxX, boxY, boxW, boxH, M5_COLOR_YELLOW);
-        mainCanvas->setTextColor(M5_COLOR_WHITE);
+        // M5 贴纸胶囊底框：UI_COLOR_ALERT 霓虹粉紫背景 + UI_COLOR_SELECT_BG 亮黄边框
+        mainCanvas->fillRect(boxX, boxY, boxW, boxH, UI_COLOR_ALERT);
+        mainCanvas->drawRect(boxX, boxY, boxW, boxH, UI_COLOR_SELECT_BG);
+        mainCanvas->setTextColor(UI_COLOR_TEXT_MAIN);
         mainCanvas->setTextSize(1);
         mainCanvas->setCursor(boxX + 6, boxY + 4);
         mainCanvas->print(appState.overlayMsg);
@@ -157,46 +156,38 @@ void UIManager::showStatus(const String& statusJson) {
     const int visible = 8;
 
     while (true) {
-        mainCanvas->fillSprite(M5_COLOR_DARK_BG);
+        mainCanvas->fillSprite(UI_COLOR_BG);
         
-        // Header Banner (亮橙底 + 黑色粗体)
-        mainCanvas->fillRect(0, 0, 240, 20, M5_COLOR_ORANGE);
-        mainCanvas->setTextColor(M5_COLOR_BLACK);
+        // 统一 Header Banner (亮橙底 + 纯黑字)
+        mainCanvas->fillRect(0, 0, 240, 20, UI_COLOR_HEADER_BG);
+        mainCanvas->setTextColor(UI_COLOR_HEADER_TXT);
         mainCanvas->setTextSize(1);
-        mainCanvas->setCursor(10, 6);
-        mainCanvas->print("--- CAMERA STATUS ---");
+        mainCanvas->setCursor(45, 6);
+        mainCanvas->print("[ CAMERA STATUS ]");
         
         // 绘制列表项
         for (int i = 0; i < visible && (offset + i) < (int)items.size(); i++) {
             int yPos = 25 + i * 11;
             
             if (i % 2 == 0) {
-                mainCanvas->fillRect(6, yPos - 1, 222, 10, M5_COLOR_CARD_BG);
+                mainCanvas->fillRect(6, yPos - 1, 222, 10, UI_COLOR_SURFACE);
             }
             
-            // Key 使用 Cyber Teal
-            mainCanvas->setTextColor(M5_COLOR_CYAN);
+            // Key 使用统一 UI_COLOR_BORDER (电光青)
+            mainCanvas->setTextColor(UI_COLOR_BORDER);
             mainCanvas->setCursor(10, yPos);
             mainCanvas->printf("%-12s:", items[offset + i].key.c_str());
             
-            // Value 使用 Vibrant Yellow
-            mainCanvas->setTextColor(M5_COLOR_YELLOW);
+            // Value 使用统一 UI_COLOR_SELECT_BG (亮黄)
+            mainCanvas->setTextColor(UI_COLOR_SELECT_BG);
             mainCanvas->setCursor(100, yPos);
             mainCanvas->print(items[offset + i].val);
         }
         
-        // 滚动条 (亮橙滑块 + 电光青轨道)
-        if (items.size() > (size_t)visible) {
-            int bh = 85, th = bh * visible / items.size();
-            int ty = 25 + (bh - th) * offset / (items.size() - visible);
-            mainCanvas->fillRect(232, 25, 3, bh, M5_COLOR_CARD_BG);
-            mainCanvas->drawRect(232, 25, 3, bh, M5_COLOR_CYAN);
-            mainCanvas->fillRect(232, ty, 3, th, M5_COLOR_ORANGE);
-        }
-
-        // Footer Banner (鲜黄胶囊提示)
-        mainCanvas->fillRect(10, 118, 220, 14, M5_COLOR_YELLOW);
-        mainCanvas->setTextColor(M5_COLOR_BLACK);
+        // 统一 Footer Bar (暗面底 + 青框 + 黄字)
+        mainCanvas->fillRect(10, 118, 220, 14, UI_COLOR_SURFACE);
+        mainCanvas->drawRect(10, 118, 220, 14, UI_COLOR_BORDER);
+        mainCanvas->setTextColor(UI_COLOR_SELECT_BG);
         mainCanvas->setCursor(45, 121);
         mainCanvas->print("ESC / Enter: Return");
 
@@ -218,47 +209,48 @@ void UIManager::showStatus(const String& statusJson) {
 }
 
 void UIManager::showWiFiPortal() {
-    mainCanvas->fillSprite(M5_COLOR_DARK_BG);
+    mainCanvas->fillSprite(UI_COLOR_BG);
     
-    // Header Banner (鲜黄底黑字)
-    mainCanvas->fillRect(0, 0, 240, 22, M5_COLOR_YELLOW);
-    mainCanvas->setTextColor(M5_COLOR_BLACK);
-    mainCanvas->setTextSize(2);
-    mainCanvas->setCursor(15, 3);
-    mainCanvas->print("WIFI FILE SERVER");
+    // 统一 Header Banner (亮橙底 + 纯黑字)
+    mainCanvas->fillRect(0, 0, 240, 20, UI_COLOR_HEADER_BG);
+    mainCanvas->setTextColor(UI_COLOR_HEADER_TXT);
+    mainCanvas->setTextSize(1);
+    mainCanvas->setCursor(40, 6);
+    mainCanvas->print("[ WIFI FILE SERVER ]");
 
     mainCanvas->setTextSize(1);
     
     // 步骤 1
-    mainCanvas->fillRect(10, 32, 20, 14, M5_COLOR_CYAN);
-    mainCanvas->setTextColor(M5_COLOR_BLACK);
+    mainCanvas->fillRect(10, 32, 20, 14, UI_COLOR_BORDER);
+    mainCanvas->setTextColor(UI_COLOR_HEADER_TXT);
     mainCanvas->setCursor(17, 35);
     mainCanvas->print("1");
-    mainCanvas->setTextColor(M5_COLOR_WHITE);
+    mainCanvas->setTextColor(UI_COLOR_TEXT_MAIN);
     mainCanvas->setCursor(36, 35);
     mainCanvas->print("Connect: Cardputer-Cam");
 
     // 步骤 2
-    mainCanvas->fillRect(10, 52, 20, 14, M5_COLOR_CYAN);
-    mainCanvas->setTextColor(M5_COLOR_BLACK);
+    mainCanvas->fillRect(10, 52, 20, 14, UI_COLOR_BORDER);
+    mainCanvas->setTextColor(UI_COLOR_HEADER_TXT);
     mainCanvas->setCursor(17, 55);
     mainCanvas->print("2");
-    mainCanvas->setTextColor(M5_COLOR_WHITE);
+    mainCanvas->setTextColor(UI_COLOR_TEXT_MAIN);
     mainCanvas->setCursor(36, 55);
     mainCanvas->print("No Password Required");
 
     // 步骤 3
-    mainCanvas->fillRect(10, 72, 20, 14, M5_COLOR_CYAN);
-    mainCanvas->setTextColor(M5_COLOR_BLACK);
+    mainCanvas->fillRect(10, 72, 20, 14, UI_COLOR_BORDER);
+    mainCanvas->setTextColor(UI_COLOR_HEADER_TXT);
     mainCanvas->setCursor(17, 75);
     mainCanvas->print("3");
-    mainCanvas->setTextColor(M5_COLOR_YELLOW);
+    mainCanvas->setTextColor(UI_COLOR_SELECT_BG);
     mainCanvas->setCursor(36, 75);
     mainCanvas->print("URL: http://192.168.4.1");
     
-    // 底部 Exit Badge Banner (亮橙底黑字)
-    mainCanvas->fillRect(10, 108, 220, 18, M5_COLOR_ORANGE);
-    mainCanvas->setTextColor(M5_COLOR_BLACK);
+    // 统一 Footer Bar (暗面底 + 青框 + 黄字)
+    mainCanvas->fillRect(10, 108, 220, 18, UI_COLOR_SURFACE);
+    mainCanvas->drawRect(10, 108, 220, 18, UI_COLOR_BORDER);
+    mainCanvas->setTextColor(UI_COLOR_SELECT_BG);
     mainCanvas->setCursor(32, 113);
     mainCanvas->print("Press 'W' to Exit & Resume");
     
@@ -266,40 +258,41 @@ void UIManager::showWiFiPortal() {
 }
 
 void UIManager::showUsbPortal() {
-    mainCanvas->fillSprite(M5_COLOR_DARK_BG);
+    mainCanvas->fillSprite(UI_COLOR_BG);
     
-    // Header Banner (电光青底黑字)
-    mainCanvas->fillRect(0, 0, 240, 22, M5_COLOR_CYAN);
-    mainCanvas->setTextColor(M5_COLOR_BLACK);
-    mainCanvas->setTextSize(2);
-    mainCanvas->setCursor(15, 3);
-    mainCanvas->print("USB MSC STORAGE");
+    // 统一 Header Banner (亮橙底 + 纯黑字)
+    mainCanvas->fillRect(0, 0, 240, 20, UI_COLOR_HEADER_BG);
+    mainCanvas->setTextColor(UI_COLOR_HEADER_TXT);
+    mainCanvas->setTextSize(1);
+    mainCanvas->setCursor(45, 6);
+    mainCanvas->print("[ USB MSC STORAGE ]");
 
     mainCanvas->setTextSize(1);
     if (!isSDInitialized) {
-        mainCanvas->fillRect(10, 35, 220, 18, M5_COLOR_PINK);
-        mainCanvas->setTextColor(M5_COLOR_WHITE);
+        mainCanvas->fillRect(10, 35, 220, 18, UI_COLOR_ALERT);
+        mainCanvas->setTextColor(UI_COLOR_TEXT_MAIN);
         mainCanvas->setCursor(16, 40);
         mainCanvas->println("SD Card NOT Initialized!");
         
-        mainCanvas->setTextColor(M5_COLOR_WHITE);
+        mainCanvas->setTextColor(UI_COLOR_TEXT_MAIN);
         mainCanvas->setCursor(10, 60);
         mainCanvas->println("Insert SD card & restart device.");
     } else {
-        mainCanvas->setTextColor(M5_COLOR_WHITE);
+        mainCanvas->setTextColor(UI_COLOR_TEXT_MAIN);
         mainCanvas->setCursor(10, 36);
         mainCanvas->println("SD Card mounted as USB Drive.");
-        mainCanvas->setTextColor(M5_COLOR_YELLOW);
+        mainCanvas->setTextColor(UI_COLOR_SELECT_BG);
         mainCanvas->setCursor(10, 52);
         mainCanvas->println("Photos path: /images/ folder.");
-        mainCanvas->setTextColor(M5_COLOR_CYAN);
+        mainCanvas->setTextColor(UI_COLOR_BORDER);
         mainCanvas->setCursor(10, 68);
         mainCanvas->println("Eject safely on PC before unplug!");
     }
     
-    // 底部 Exit Badge Banner (亮橙底黑字)
-    mainCanvas->fillRect(10, 108, 220, 18, M5_COLOR_ORANGE);
-    mainCanvas->setTextColor(M5_COLOR_BLACK);
+    // 统一 Footer Bar (暗面底 + 青框 + 黄字)
+    mainCanvas->fillRect(10, 108, 220, 18, UI_COLOR_SURFACE);
+    mainCanvas->drawRect(10, 108, 220, 18, UI_COLOR_BORDER);
+    mainCanvas->setTextColor(UI_COLOR_SELECT_BG);
     mainCanvas->setCursor(20, 113);
     mainCanvas->print("Press 'U' or '`' to Exit & Resume");
     
@@ -331,27 +324,27 @@ void UIManager::showHelp() {
     const int visible = 7;
 
     while (true) {
-        mainCanvas->fillSprite(M5_COLOR_DARK_BG);
+        mainCanvas->fillSprite(UI_COLOR_BG);
         
-        // Banner Header (亮橙底黑字)
-        mainCanvas->fillRect(0, 0, 240, 20, M5_COLOR_ORANGE);
-        mainCanvas->setTextColor(M5_COLOR_BLACK);
+        // 统一 Header Banner (亮橙底 + 纯黑字)
+        mainCanvas->fillRect(0, 0, 240, 20, UI_COLOR_HEADER_BG);
+        mainCanvas->setTextColor(UI_COLOR_HEADER_TXT);
         mainCanvas->setTextSize(1);
-        mainCanvas->setCursor(20, 6);
-        mainCanvas->print("CARDPUTER KEYMAP & HELP");
+        mainCanvas->setCursor(45, 6);
+        mainCanvas->print("[ KEYMAP & HELP ]");
         
         for (int i = 0; i < visible && (offset + i) < totalItems; i++) {
             int yPos = 24 + i * 13;
             
-            // 贴纸键帽（黄底黑字框）
+            // 贴纸键帽（统一亮黄底 + 纯黑字框）
             int kw = strlen(items[offset + i].key) * 6 + 8;
-            mainCanvas->fillRect(8, yPos, kw, 11, M5_COLOR_YELLOW);
-            mainCanvas->setTextColor(M5_COLOR_BLACK);
+            mainCanvas->fillRect(8, yPos, kw, 11, UI_COLOR_SELECT_BG);
+            mainCanvas->setTextColor(UI_COLOR_SELECT_TXT);
             mainCanvas->setCursor(12, yPos + 2);
             mainCanvas->print(items[offset + i].key);
             
-            // 对应描述
-            mainCanvas->setTextColor(M5_COLOR_WHITE);
+            // 对应描述 (纯白正文)
+            mainCanvas->setTextColor(UI_COLOR_TEXT_MAIN);
             mainCanvas->setCursor(16 + kw, yPos + 2);
             mainCanvas->print(items[offset + i].desc);
         }
@@ -360,14 +353,15 @@ void UIManager::showHelp() {
         if (totalItems > visible) {
             int bh = 90, th = bh * visible / totalItems;
             int ty = 24 + (bh - th) * offset / (totalItems - visible);
-            mainCanvas->fillRect(232, 24, 3, bh, M5_COLOR_CARD_BG);
-            mainCanvas->drawRect(232, 24, 3, bh, M5_COLOR_CYAN);
-            mainCanvas->fillRect(232, ty, 3, th, M5_COLOR_ORANGE);
+            mainCanvas->fillRect(232, 24, 3, bh, UI_COLOR_SURFACE);
+            mainCanvas->drawRect(232, 24, 3, bh, UI_COLOR_BORDER);
+            mainCanvas->fillRect(232, ty, 3, th, UI_COLOR_HEADER_BG);
         }
 
-        // Footer 提示
-        mainCanvas->fillRect(10, 118, 220, 14, M5_COLOR_CYAN);
-        mainCanvas->setTextColor(M5_COLOR_BLACK);
+        // 统一 Footer Bar (暗面底 + 青框 + 黄字)
+        mainCanvas->fillRect(10, 118, 220, 14, UI_COLOR_SURFACE);
+        mainCanvas->drawRect(10, 118, 220, 14, UI_COLOR_BORDER);
+        mainCanvas->setTextColor(UI_COLOR_SELECT_BG);
         mainCanvas->setCursor(45, 121);
         mainCanvas->print("ESC / H: Return Finder");
 
@@ -399,14 +393,13 @@ static void drawFilterMenu() {
     if (offset + visible > total) offset = total - visible;
     if (offset < 0) offset = 0;
     
-    // M5 镂空贴纸卡片弹窗（宽度收窄至 160px，与 160x120 取景区域宽度精密对齐）
+    // 卡片 Header 框与描边 (UI_COLOR_BORDER 电光青 + UI_COLOR_HEADER_BG 亮橙内框)
     int cardX = 40, cardY = 22, cardW = 160, cardH = 100;
-    mainCanvas->drawRect(cardX, cardY, cardW, cardH, M5_COLOR_CYAN);
-    mainCanvas->drawRect(cardX + 1, cardY + 1, cardW - 2, cardH - 2, M5_COLOR_ORANGE);
+    mainCanvas->drawRect(cardX, cardY, cardW, cardH, UI_COLOR_BORDER);
+    mainCanvas->drawRect(cardX + 1, cardY + 1, cardW - 2, cardH - 2, UI_COLOR_HEADER_BG);
     
-    // 卡片 Header 贴纸 (亮黄底黑字)
-    mainCanvas->fillRect(cardX + 2, cardY + 2, cardW - 4, 16, M5_COLOR_YELLOW);
-    mainCanvas->setTextColor(M5_COLOR_BLACK);
+    // 卡片 Header 标题 (UI_COLOR_SELECT_BG 亮黄纯字透视)
+    mainCanvas->setTextColor(UI_COLOR_SELECT_BG);
     mainCanvas->setTextSize(1);
     mainCanvas->setCursor(cardX + 29, cardY + 6);
     mainCanvas->print("[ FILTER SELECT ]");
@@ -417,17 +410,17 @@ static void drawFilterMenu() {
         int yPos = cardY + 24 + (i - offset) * 14;
         
         if (i == selected) {
-            // 仅选中项使用亮橙满宽贴纸条 + 黑色粗体
-            mainCanvas->fillRect(cardX + 6, yPos - 1, cardW - 12, 13, M5_COLOR_ORANGE);
-            mainCanvas->setTextColor(M5_COLOR_BLACK);
+            // 选中项统一为 UI_COLOR_SELECT_BG 亮黄贴纸条 + UI_COLOR_SELECT_TXT 纯黑字
+            mainCanvas->fillRect(cardX + 6, yPos - 1, cardW - 12, 13, UI_COLOR_SELECT_BG);
+            mainCanvas->setTextColor(UI_COLOR_SELECT_TXT);
             mainCanvas->setCursor(cardX + 10, yPos + 2);
             mainCanvas->printf("> %s", name);
         } else {
-            // 未选中项镂空背景，使用鲜黄/电光青高对比度文本透视显示
-            mainCanvas->setTextColor(M5_COLOR_CYAN);
+            // 未选中项透视背景 + UI_COLOR_TEXT_MAIN 纯白字
+            mainCanvas->setTextColor(UI_COLOR_BORDER);
             mainCanvas->setCursor(cardX + 10, yPos + 2);
             mainCanvas->print(" ");
-            mainCanvas->setTextColor(M5_COLOR_WHITE);
+            mainCanvas->setTextColor(UI_COLOR_TEXT_MAIN);
             mainCanvas->print(name);
         }
     }
@@ -442,14 +435,7 @@ bool UIManager::renderStream() {
         // 恢复 1.5 倍 Center Crop 填充渲染，使取景图像完美充满 240x135 全屏
         canvas->pushRotateZoom(mainCanvas, mainCanvas->width()/2, mainCanvas->height()/2, 0, 1.5f, 1.5f);
         
-        // 1. 左上角 M5-CAM 贴纸 Badge
-        mainCanvas->fillRect(4, 4, 48, 14, M5_COLOR_ORANGE);
-        mainCanvas->setTextColor(M5_COLOR_BLACK);
-        mainCanvas->setTextSize(1);
-        mainCanvas->setCursor(8, 7);
-        mainCanvas->print("M5-CAM");
-        
-        // 2. 滤镜 Badge (若启用)
+        // 滤镜 Badge (若启用，UI_COLOR_SELECT_BG 亮黄底 + UI_COLOR_SELECT_TXT 纯黑字)
         FilterMode fm = FilterManager::getFilter();
         if (fm != FILTER_NONE) {
             static FilterMode lastFm = FILTER_NONE;
@@ -465,13 +451,13 @@ bool UIManager::renderStream() {
                 cachedLutW = strlen(cachedLutName) * 6 + 12;
             }
             
-            mainCanvas->fillRect(54, 4, cachedLutW, 14, M5_COLOR_YELLOW);
-            mainCanvas->setTextColor(M5_COLOR_BLACK);
-            mainCanvas->setCursor(59, 7);
+            mainCanvas->fillRect(4, 4, cachedLutW, 14, UI_COLOR_SELECT_BG);
+            mainCanvas->setTextColor(UI_COLOR_SELECT_TXT);
+            mainCanvas->setCursor(9, 7);
             mainCanvas->print(cachedLutName);
         }
         
-        // 3. 右上角 FPS 与 SRAM 极客监控 Badge (1秒高频缓存，避免逐帧 snprintf/strlen 开销)
+        // 3. 右上角 FPS 与 SRAM 极客监控 Badge (UI_COLOR_SURFACE 暗底 + UI_COLOR_BORDER 青框 + UI_COLOR_METRIC 绿字)
         static uint32_t lastOverlayUpdate = 0;
         static char cachedFpsBuf[32] = "0.0fps";
         static int cachedFpsW = 44;
@@ -485,14 +471,14 @@ bool UIManager::renderStream() {
             cachedFpsX = mainCanvas->width() - cachedFpsW - 4;
         }
 
-        mainCanvas->fillRect(cachedFpsX, 4, cachedFpsW, 14, M5_COLOR_CARD_BG);
-        mainCanvas->drawRect(cachedFpsX, 4, cachedFpsW, 14, M5_COLOR_CYAN);
-        mainCanvas->setTextColor(M5_COLOR_GREEN);
+        mainCanvas->fillRect(cachedFpsX, 4, cachedFpsW, 14, UI_COLOR_SURFACE);
+        mainCanvas->drawRect(cachedFpsX, 4, cachedFpsW, 14, UI_COLOR_BORDER);
+        mainCanvas->setTextColor(UI_COLOR_METRIC);
         mainCanvas->setCursor(cachedFpsX + 4, 7);
         mainCanvas->print(cachedFpsBuf);
         
-        // 4. 全屏四角极客视距折角框 (Corner Brackets ┌ ┐ └ ┘ 拓展至 240x135 屏幕最外角边缘)
-        uint16_t bracketColor = M5_COLOR_CYAN;
+        // 4. 全屏四角极客视距折角框 (UI_COLOR_BORDER 电光青)
+        uint16_t bracketColor = UI_COLOR_BORDER;
         mainCanvas->drawFastHLine(3, 3, 10, bracketColor);
         mainCanvas->drawFastVLine(3, 3, 10, bracketColor);
         mainCanvas->drawFastHLine(227, 3, 10, bracketColor);
@@ -517,20 +503,20 @@ bool UIManager::renderStream() {
 }
 
 void UIManager::renderTimelapse(int count, unsigned long last, unsigned long interval) {
-    mainCanvas->fillSprite(M5_COLOR_DARK_BG);
+    mainCanvas->fillSprite(UI_COLOR_BG);
     
-    // Header Banner (霓虹粉紫底黑字)
-    mainCanvas->fillRect(0, 0, 240, 22, M5_COLOR_PINK);
-    mainCanvas->setTextColor(M5_COLOR_WHITE);
-    mainCanvas->setTextSize(2); 
-    mainCanvas->setCursor(45, 3);
-    mainCanvas->println("TIMELAPSE");
+    // 统一 Header Banner (亮橙底 + 纯黑字)
+    mainCanvas->fillRect(0, 0, 240, 20, UI_COLOR_HEADER_BG);
+    mainCanvas->setTextColor(UI_COLOR_HEADER_TXT);
+    mainCanvas->setTextSize(1); 
+    mainCanvas->setCursor(55, 6);
+    mainCanvas->print("[ TIMELAPSE ]");
     
     mainCanvas->setTextSize(1);
-    mainCanvas->setTextColor(M5_COLOR_CYAN);
+    mainCanvas->setTextColor(UI_COLOR_BORDER);
     mainCanvas->setCursor(20, 36);
     mainCanvas->print("Photos Captured: ");
-    mainCanvas->setTextColor(M5_COLOR_YELLOW);
+    mainCanvas->setTextColor(UI_COLOR_SELECT_BG);
     mainCanvas->setTextSize(2);
     mainCanvas->printf("%d", count);
     
@@ -538,28 +524,29 @@ void UIManager::renderTimelapse(int count, unsigned long last, unsigned long int
     long cdSec = (countdown < 0 ? 0 : countdown / 1000);
     
     mainCanvas->setTextSize(1);
-    mainCanvas->setTextColor(M5_COLOR_WHITE);
+    mainCanvas->setTextColor(UI_COLOR_TEXT_MAIN);
     mainCanvas->setCursor(20, 60);
     mainCanvas->printf("Next Shot In: %02ld s", cdSec);
     
     // 进度条 (Cyan 槽 + Green 进度条)
     int barX = 20, barY = 78, barW = 200, barH = 12;
-    mainCanvas->fillRect(barX, barY, barW, barH, M5_COLOR_CARD_BG);
-    mainCanvas->drawRect(barX, barY, barW, barH, M5_COLOR_CYAN);
+    mainCanvas->fillRect(barX, barY, barW, barH, UI_COLOR_SURFACE);
+    mainCanvas->drawRect(barX, barY, barW, barH, UI_COLOR_BORDER);
     if (interval > 0) {
         long elapsed = (long)(millis() - last);
         if (elapsed > (long)interval) elapsed = interval;
         int fillW = (int)(elapsed * (barW - 4) / interval);
         if (fillW > 0) {
-            mainCanvas->fillRect(barX + 2, barY + 2, fillW, barH - 4, M5_COLOR_GREEN);
+            mainCanvas->fillRect(barX + 2, barY + 2, fillW, barH - 4, UI_COLOR_METRIC);
         }
     }
     
-    // Footer Exit Badge Banner (亮橙底黑字)
-    mainCanvas->fillRect(15, 108, 210, 18, M5_COLOR_ORANGE);
-    mainCanvas->setTextColor(M5_COLOR_BLACK);
-    mainCanvas->setCursor(50, 113);
-    mainCanvas->println("Hold BtnG0 to Exit");
+    // 统一 Footer Bar (暗面底 + 青框 + 黄字)
+    mainCanvas->fillRect(10, 108, 220, 18, UI_COLOR_SURFACE);
+    mainCanvas->drawRect(10, 108, 220, 18, UI_COLOR_BORDER);
+    mainCanvas->setTextColor(UI_COLOR_SELECT_BG);
+    mainCanvas->setCursor(45, 113);
+    mainCanvas->print("Hold BtnG0 to Exit & Resume");
     mainCanvas->pushSprite(&M5Cardputer.Display, 0, 0);
 }
 
@@ -665,9 +652,10 @@ void UIManager::processAndSaveFilteredPhoto(const String& path, bool keepOrigina
     delay(150);
 
     // 零黑屏：不清空 LCD 屏幕，定格保留按下快门瞬间的画面，仅在画面下方叠加 FX Processing 贴纸胶囊
-    M5Cardputer.Display.fillRect(40, 108, 160, 18, M5_COLOR_PINK);
-    M5Cardputer.Display.drawRect(40, 108, 160, 18, M5_COLOR_YELLOW);
-    M5Cardputer.Display.setTextColor(M5_COLOR_WHITE);
+    // 零黑屏：定格快门画面，叠加 UI_COLOR_ALERT (粉紫) + UI_COLOR_SELECT_BG (黄框) 贴纸胶囊
+    M5Cardputer.Display.fillRect(40, 108, 160, 18, UI_COLOR_ALERT);
+    M5Cardputer.Display.drawRect(40, 108, 160, 18, UI_COLOR_SELECT_BG);
+    M5Cardputer.Display.setTextColor(UI_COLOR_TEXT_MAIN);
     M5Cardputer.Display.setTextSize(1);
     M5Cardputer.Display.setCursor(62, 113);
     M5Cardputer.Display.print("FX Processing...");
