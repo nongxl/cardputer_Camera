@@ -2,6 +2,7 @@
 #include "CameraClient.h"
 #include "StorageManager.h"
 #include "UIManager.h"
+#include "FilterManager.h"
 #include <time.h>
 
 String TimelapseManager::currentDir = "";
@@ -88,6 +89,9 @@ bool TimelapseManager::capture() {
     // 我们直接调用 downloadPhoto，它内部会请求 /capture 触发拍照。
     // 移除冗余的 triggerCapture 和 delay(500)
     if (CameraClient::downloadPhoto(filename)) {
+        if (FilterManager::getFilter() != FILTER_NONE) {
+            UIManager::processAndSaveFilteredPhoto(filename);
+        }
         photoCount++;
         lastShotTime = millis();
         return true;

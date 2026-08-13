@@ -109,12 +109,55 @@ void loop() {
             appState.overlayTimestamp = millis();
             break;
         }
-        case EVENT_FILTER_GLITCH: {
-            FilterMode next = (FilterManager::getFilter() == FILTER_GLITCH) ? FILTER_NONE : FILTER_GLITCH;
-            FilterManager::setFilter(next);
-            snprintf(appState.overlayMsg, sizeof(appState.overlayMsg),
-                     next == FILTER_NONE ? "Filter: OFF" : "Filter: Glitch");
-            appState.overlayTimestamp = millis();
+
+        case EVENT_FILTER_CUSTOM_CYCLE: {
+            FilterManager::toggleFilterList();
+            break;
+        }
+        case EVENT_FILTER_LIST_UP: {
+            FilterManager::cycleMenuSelection(-1);
+            break;
+        }
+        case EVENT_FILTER_LIST_DOWN: {
+            FilterManager::cycleMenuSelection(1);
+            break;
+        }
+        case EVENT_USB_MODE: {
+            serialPrintf("Entering USB Mode...\n");
+            streamClient.stop();
+            
+            // 等待 'u' 键释放，防止重复判定
+            while (M5Cardputer.Keyboard.isKeyPressed('u')) {
+                M5Cardputer.update();
+                delay(10);
+            }
+            
+            UIManager::showUsbPortal();
+            StorageManager::startUSBMSC();
+            
+            // 阻塞检测再次按下 u 或 `
+            bool exitUsb = false;
+            while (!exitUsb) {
+                M5Cardputer.update();
+                if (M5Cardputer.Keyboard.isKeyPressed('u') || M5Cardputer.Keyboard.isKeyPressed('`')) {
+                    exitUsb = true;
+                }
+                delay(50);
+            }
+            
+            // 等待按键释放防抖
+            while (M5Cardputer.Keyboard.isKeyPressed('u') || M5Cardputer.Keyboard.isKeyPressed('`')) {
+                M5Cardputer.update();
+                delay(10);
+            }
+            
+            StorageManager::stopUSBMSC();
+            UIManager::displayLine("USB Mode Stopped", true);
+            
+            // 重新连接相机 WiFi 并恢复取景流
+            UIManager::displayLine("Reconnecting to Camera...");
+            WiFi.begin("UnitCamS3-WiFi", "");
+            appState.isRestartStream = true;
             break;
         }
         case EVENT_WIFI_SERVER: {
@@ -198,10 +241,11 @@ void loop() {
         if (!isBurst) {
             CameraClient::triggerCapture();
             delay(100);
+            unsigned long ts = millis();
             char filename[64];
-            sprintf(filename, "/images/IMG_%lu.jpg", millis());
+            sprintf(filename, "/images/IMG_%lu.jpg", ts);
             if (CameraClient::downloadPhoto(filename)) {
-                snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "Saved: %lu", millis());
+                snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "Saved: %lu", ts);
                 appState.overlayTimestamp = millis();
                 // 创意滤镜后期处理
                 if (FilterManager::getFilter() != FILTER_NONE) {

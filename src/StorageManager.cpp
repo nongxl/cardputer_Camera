@@ -1,5 +1,7 @@
 #include "StorageManager.h"
 #include <SPI.h>
+#include "USB.h"
+#include "USBMSC.h"
 
 bool StorageManager::init() {
     const int SD_CS = 12;
@@ -110,4 +112,52 @@ bool StorageManager::createDirectory(const char* path) {
 
 bool StorageManager::exists(const char* path) {
     return SD.exists(path);
+}
+
+// ── USB Mass Storage Class (MSC) 实现 ─────────────────────────
+static USBMSC msc;
+
+// 当电脑读取 SD 卡扇区时的回调
+static int32_t onRead(uint32_t lba, uint32_t offset, void* buffer, uint32_t bufsize) {
+    uint32_t sector_count = bufsize / 512;
+    for (uint32_t i = 0; i < sector_count; i++) {
+        if (!SD.readRAW((uint8_t*)buffer + i * 512, lba + i)) {
+            return -1;
+        }
+    }
+    return bufsize;
+}
+
+// 当电脑写入 SD 卡扇区时的回调
+static int32_t onWrite(uint32_t lba, uint32_t offset, uint8_t* buffer, uint32_t bufsize) {
+    uint32_t sector_count = bufsize / 512;
+    for (uint32_t i = 0; i < sector_count; i++) {
+        if (!SD.writeRAW(buffer + i * 512, lba + i)) {
+            return -1;
+        }
+    }
+    return bufsize;
+}
+
+void StorageManager::startUSBMSC() {
+    if (!isSDInitialized) return;
+    
+    msc.onRead(onRead);
+    msc.onWrite(onWrite);
+    msc.mediaPresent(true);
+    // SD.cardSize() 返回字节大小，除以 512 得到总扇区数
+    msc.begin(SD.cardSize() / 512, 512);
+    USB.begin();
+    serialPrintf("[USB] Mass Storage device initialized and started.\n");
+}
+
+void StorageManager::stopUSBMSC() {
+    msc.mediaPresent(false);
+    msc.end();
+    
+    // 强制卸载重新挂载 SD 卡，保证 PC 写入的最新 FAT 分区变动在 Cardputer 端完全同步刷新
+    SD.end();
+    delay(200);
+    StorageManager::init();
+    serialPrintf("[USB] Mass Storage stopped. SD card remounted.\n");
 }

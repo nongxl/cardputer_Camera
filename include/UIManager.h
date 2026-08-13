@@ -10,6 +10,7 @@ public:
     static void drawCaptureOverlay();
     static void showStatus(const String& statusJson);
     static void showWiFiPortal();
+    static void showUsbPortal();
     static void showHelp();
     static bool renderStream();
     static void renderTimelapse(int photoCount, unsigned long lastShotTime, unsigned long interval);

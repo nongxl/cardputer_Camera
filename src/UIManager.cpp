@@ -143,19 +143,51 @@ void UIManager::showWiFiPortal() {
     mainCanvas.pushSprite(&M5Cardputer.Display, 0, 0);
 }
 
+void UIManager::showUsbPortal() {
+    mainCanvas.fillSprite(TFT_BLACK);
+    mainCanvas.setTextColor(UI_COLOR_TITLE);
+    mainCanvas.setTextSize(2);
+    mainCanvas.setCursor(10, 5);
+    mainCanvas.println("USB STORAGE MODE");
+
+    mainCanvas.setTextSize(1);
+    mainCanvas.setCursor(10, 35);
+    if (!isSDInitialized) {
+        mainCanvas.setTextColor(TFT_RED);
+        mainCanvas.println("SD Card NOT Initialized!");
+        mainCanvas.setTextColor(UI_COLOR_TEXT);
+        mainCanvas.setCursor(10, 50);
+        mainCanvas.println("Please insert SD card and restart.");
+    } else {
+        mainCanvas.setTextColor(UI_COLOR_TEXT);
+        mainCanvas.println("SD Card is mounted as USB Drive.");
+        mainCanvas.setCursor(10, 50);
+        mainCanvas.println("Access photos under /images/ folder.");
+        mainCanvas.setCursor(10, 65);
+        mainCanvas.println("Make sure to eject safely on PC.");
+    }
+    
+    mainCanvas.setCursor(10, 85);
+    mainCanvas.setTextColor(UI_COLOR_ACCENT);
+    mainCanvas.println("Press 'U' or '`' to exit & resume");
+    
+    mainCanvas.pushSprite(&M5Cardputer.Display, 0, 0);
+}
+
 void UIManager::showHelp() {
     std::vector<String> lines = {
         "--- [ CAMERA CONTROLS ] ---",
         "BtnA: Capture Photo / Burst",
         "T   : Timelapse Mode",
         "W   : WiFi File Server",
+        "U   : USB Storage Mode",
         "R   : Restart Device",
         "`   : Camera Status",
         "H   : Help Menu",
         "---------------------------",
         "7   : Filter - GameBoy",
         "8   : Filter - Pixelate",
-        "9   : Filter - Glitch",
+        "9   : Custom LUT Menu",
         "; / . : Brightness Up/Down",
         "[ / ] : Saturation Up/Down",
         "_ / = : Sharpness Up/Down",
@@ -205,6 +237,46 @@ void UIManager::showHelp() {
     }
 }
 
+static void drawFilterMenu() {
+    int total = FilterManager::getMenuCount();
+    if (total == 0) return;
+    
+    int selected = FilterManager::getMenuSelectedIndex();
+    int visible = 7;
+    int offset = selected - visible / 2;
+    if (offset < 0) offset = 0;
+    if (offset + visible > total) offset = total - visible;
+    if (offset < 0) offset = 0;
+    
+    // 去掉主菜单黑色背景填充，只保留边框并统一使用系统 Accent 橙色
+    mainCanvas.drawRect(10, 10, 220, 115, UI_COLOR_ACCENT);
+    
+    // 统一使用系统 Title 青色作为菜单标题配色
+    mainCanvas.setTextColor(UI_COLOR_TITLE);
+    mainCanvas.setTextSize(1);
+    mainCanvas.setCursor(15, 15);
+    mainCanvas.print("--- Filter Menu ---");
+    
+    // 绘制滤镜选项
+    for (int i = offset; i < offset + visible && i < total; i++) {
+        const char* name = FilterManager::getMenuIndexName(i);
+        int yPos = 30 + (i - offset) * 12;
+        
+        if (i == selected) {
+            // 高亮选中条目使用系统 Accent 橙色镂空边框，文字使用橙色，无背景遮挡
+            mainCanvas.drawRect(12, yPos, 216, 11, UI_COLOR_ACCENT);
+            mainCanvas.setTextColor(UI_COLOR_ACCENT);
+            mainCanvas.setCursor(15, yPos + 2);
+            mainCanvas.printf("> %s", name);
+        } else {
+            // 普通条目使用系统 Text 白色
+            mainCanvas.setTextColor(UI_COLOR_TEXT);
+            mainCanvas.setCursor(15, yPos + 2);
+            mainCanvas.printf("  %s", name);
+        }
+    }
+}
+
 bool UIManager::renderStream() {
     bool drawSuccess = canvas.drawJpg(appState.networkBuffer, appState.networkSize, 0, 0, 0, 0, 0, 0, 0.5f);
     if (drawSuccess && FilterManager::getFilter() != FILTER_NONE) {
@@ -226,10 +298,11 @@ bool UIManager::renderStream() {
         }
 
         FilterMode fm = FilterManager::getFilter();
-        const char* filterNames[] = { "", "GB", "PIX", "GLT" };
+        const char* filterNames[] = { "", "GB", "PIX", "LUT" };
         char buf[64];
         if (fm != FILTER_NONE) {
-            snprintf(buf, sizeof(buf), "[%s] FPS:%.1f %u/%uK", filterNames[(int)fm], currentFps, cachedUsedKB, cachedTotalKB);
+            const char* name = (fm == FILTER_CUSTOM) ? (FilterManager::getCustomLutName()[0] != '\0' ? FilterManager::getCustomLutName() : "LUT") : filterNames[(int)fm];
+            snprintf(buf, sizeof(buf), "[%s] FPS:%.1f %u/%uK", name, currentFps, cachedUsedKB, cachedTotalKB);
         } else {
             snprintf(buf, sizeof(buf), "FPS:%.1f %u/%uK", currentFps, cachedUsedKB, cachedTotalKB);
         }
@@ -239,6 +312,9 @@ bool UIManager::renderStream() {
         mainCanvas.print(buf);
         
         drawCaptureOverlay();
+        if (FilterManager::isFilterListOpen()) {
+            drawFilterMenu();
+        }
         mainCanvas.pushSprite(&M5Cardputer.Display, 0, 0);
         appState.consecutiveErrors = 0;
     } else {
@@ -280,18 +356,44 @@ void UIManager::processAndSaveFilteredPhoto(const String& path) {
     M5Cardputer.Display.setTextColor(TFT_YELLOW);
     M5Cardputer.Display.print("FX Processing...");
 
+    // 渐进尝试：优先 640×480 全分辨率，内存不够则降级
+    struct FxRes { int w; int h; float scale; };
+    const FxRes candidates[] = {
+        {640, 480, 1.0f},   // 全分辨率 (需要 ~600KB)
+        {320, 240, 0.5f},   // 半分辨率 (需要 ~150KB)
+        {240, 180, 0.375f}, // 84KB ( LovyanGFX 支持任意尺寸，在此分辨率下内存需求约 84KB 很容易分配 )
+        {160, 120, 0.25f},  // 38KB ( 即使内存高度碎片化也几乎 100% 成功的保底方案 )
+    };
+
     M5Canvas fx(&M5Cardputer.Display);
-    if (fx.createSprite(240, 180)) {
+    int selIdx = -1;
+    for (int i = 0; i < 4; i++) {
+        if (fx.createSprite(candidates[i].w, candidates[i].h)) {
+            selIdx = i;
+            serialPrintf("[FX] Canvas %dx%d OK\n", candidates[i].w, candidates[i].h);
+            break;
+        }
+        serialPrintf("[FX] Canvas %dx%d failed, trying smaller\n", candidates[i].w, candidates[i].h);
+    }
+
+    if (selIdx >= 0) {
+        int fxW = candidates[selIdx].w;
+        int fxH = candidates[selIdx].h;
+        float fxScale = candidates[selIdx].scale;
+
         File f = SD.open(path);
         if (f) {
             size_t sz = f.size();
             uint8_t* b = (uint8_t*)malloc(sz);
             if (b) {
                 f.read(b, sz);
-                if (fx.drawJpg(b, sz, 0, 0, 240, 180, 0, 0, JPEG_DIV_2)) {
-                    FilterManager::applyToCanvas(fx, 0, 0, 240, 180);
+                if (fx.drawJpg(b, sz, 0, 0, fxW, fxH, 0, 0, fxScale)) {
+                    FilterManager::applyToCanvas(fx, 0, 0, fxW, fxH);
                     String pfx = path; pfx.replace(".jpg", "_FX.bmp");
                     StorageManager::saveCanvasAsBmp(fx, pfx.c_str());
+                    // 删除原始无滤镜 JPG，只保留一个滤镜文件
+                    SD.remove(path.c_str());
+                    serialPrintf("[FX] Saved %dx%d BMP\n", fxW, fxH);
                 }
                 free(b);
             }

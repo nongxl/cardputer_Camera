@@ -14,13 +14,13 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
 - **MJPEG Streaming**: Real-time camera feed display
 - **Image Capture**: High-quality photo taking
 - **WiFi File Transfer**: Access photos via browser over hotspot
-- **Software Filters**: Creative effects like GameBoy, Glitch, etc.
+- **Software Filters**: Creative effects like GameBoy, Pixelate, Vintage Film via LUT
 - **SD Card Storage**: Save captured images to storage
 
 - **MJPEG串流**：实时相机画面显示
 - **图像捕获**：高质量照片拍摄
 - **WiFi 文件传输**：通过热点在浏览器中直接下载照片
-- **软件创意滤镜**：支持 GameBoy、像素、故障风等特效
+- **软件创意滤镜**：支持 GameBoy、像素、复古胶片等特效（基于 LUT 查表架构）
 - **SD卡存储**：将捕获的图像保存到储存卡
 
 ## Hardware Requirements
@@ -62,7 +62,7 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
     - **Single Shot**: Short press `BtnA` to capture a high-resolution photo.
     - **Burst Mode**: Long press `BtnA` (> 0.5s) to capture high-resolution photos every 0.2s.
 8. Press `0`-`6` number keys to set built-in camera special effect
-9. Press `7`, `8`, or `9` to toggle Software Creative Filters (GameBoy, Pixelate, Glitch). Press the same key again to turn off.
+9. Press `7`, `8`, or `9` to toggle Software Creative Filters (GameBoy, Pixelate, Film). Press the same key again to turn off.
 10. Press `w` to enable **WiFi File Transfer Mode**. Connect to `Cardputer-Cam` and visit `http://192.168.4.1` on your phone to download images.
 11. Press `` ` `` (backtick) to view camera status and parameter settings
 12. Adjust camera parameters using keyboard:
@@ -77,7 +77,7 @@ A simple camera application for M5Cardputer, developed with PlatformIO, that ena
     - **单张拍摄**：短按 `BtnA` 按钮。
     - **连拍模式**：长按 `BtnA` 按钮（>0.5秒），每0.2秒自动拍摄一张。
 8. 按数字键 `0`-`6` 设置硬件内置特效
-9. 按 `7`、`8` 或 `9` 切换软件创意滤镜（GameBoy风、像素风、故障风），同键再按即可关闭。
+9. 按 `7`、`8` 或 `9` 切换软件创意滤镜（GameBoy风、像素风、复古胶片），同键再按即可关闭。
 10. 按 `w` 键开启 **WiFi 无线传图模式**。连接 `Cardputer-Cam` 热点后，手机访问 `http://192.168.4.1` 即可预览下载照片。
 11. 按 `` ` ``（反引号）查看相机状态和参数设置
 12. 使用键盘调整相机参数：
@@ -153,6 +153,58 @@ The application features a heavily optimized MJPEG streaming engine that achieve
 - **15KB 局帧熔断**：将单帧上限限制为 15KB，一旦由于流偏移检测到异常大包，立即熔断并复位解析器，清除过期数据堆积。
 - **自愈式重连逻辑**：若连续 15 帧渲染失败，系统会自动重启 MJPEG 流连接并执行状态机全量重置，确保长时间运行的稳定性。
 - **指标静态缓存**：缓存并显示上一帧有效图像的尺寸数据，解决了在统计时 Size 指标频繁跳 0 的误导性问题。
+
+
+## Creative Filter Implementation (LUT Architecture)
+## 创意滤镜实现技术要点（LUT 查表架构）
+
+The creative filter system uses a **Look-Up Table (LUT)** architecture for maximum performance. All color transformations are pre-computed into full RGB565 lookup tables (65,536 entries × 2 bytes = 128 KB each) at build time using a Python generator script (`tools/generate_luts.py`). At runtime, applying a filter reduces to a single memory access per pixel — **zero arithmetic operations**.
+
+创意滤镜系统采用 **LUT（查表）架构** 以实现最高性能。所有颜色变换均在编译期通过 Python 脚本（`tools/generate_luts.py`）预计算为完整的 RGB565 查表（每表 65,536 条目 × 2 字节 = 128 KB）。运行时应用滤镜仅需对每个像素执行一次内存访问——**零算术运算**。
+
+### Architecture / 架构
+
+- **LUT Storage**: All LUT arrays are declared as `static const` and reside entirely in **Flash (.rodata)** via ESP32-S3 MMU mapping. They consume **zero SRAM/PSRAM**.
+- **LUT Generation**: A Python script (`tools/generate_luts.py`) iterates all 65,536 possible RGB565 values, applies the filter's color transformation algorithm in floating-point on the PC, and outputs C header files.
+- **Unified Render Path**: All pure-color filters share a single `applyLUT()` function — no per-filter branching in the hot loop.
+
+- **LUT 存储**：所有 LUT 数组以 `static const` 声明，完全存放在 **Flash (.rodata)** 中，通过 ESP32-S3 的 MMU 映射直接寻址，**不占用任何 SRAM/PSRAM**。
+- **LUT 生成**：Python 脚本（`tools/generate_luts.py`）遍历全部 65,536 种 RGB565 颜色值，在 PC 端以浮点精度执行滤镜色彩变换算法，输出 C 头文件。
+- **统一渲染路径**：所有纯色滤镜共享一个 `applyLUT()` 函数，热循环中无分支判断。
+
+```cpp
+// Core rendering: one memory access per pixel, zero math
+inline uint16_t applyFilter(const uint16_t* lut, uint16_t pixel) {
+    return lut[pixel];  // Direct index, O(1)
+}
+```
+
+---
+
+### 1. GameBoy Filter (GameBoy 经典绿) — Pure LUT
+- Pre-computes ITU-R BT.601 grayscale quantization → 4-level green palette mapping for all 65,536 RGB565 inputs.
+- Classic palette: `#0f380f`, `#306230`, `#8bac0f`, `#9bbc0f`.
+- 预计算 ITU-R BT.601 灰度量化 → 4级绿色调色板映射，覆盖全部 65,536 种 RGB565 输入。
+- 经典四色：`#0f380f`、`#306230`、`#8bac0f`、`#9bbc0f`。
+
+### 2. Pixelate Filter (复古像素风) — Hybrid: LUT + Spatial
+- **Color mapping (LUT)**: Pre-computes vibrance boost (2.2× saturation pull) + PICO-8 16-color palette matching (weighted Euclidean distance, G×2) for all inputs.
+- **Spatial pixelation (algorithmic)**: Divides canvas into 4×4 blocks, samples top-left pixel through LUT, fills entire block with `canvas.fillRect`.
+- **颜色映射（LUT）**：预计算鲜艳度增强（2.2× 饱和度拉伸）+ PICO-8 16色调色板匹配（加权欧氏距离，G通道 ×2）。
+- **空间像素化（算法）**：将画布分割为 4×4 块，采样左上角像素经 LUT 变换后，使用 `canvas.fillRect` 填充整块。
+
+### 3. Vintage Film Filter (复古胶片暖色调) — Pure LUT
+- Pre-computes a multi-step color grade: S-curve contrast → warm color shift (+R, -B) → desaturation fade → shadow lift → highlight yellowing.
+- 预计算多步色彩分级：S曲线对比度 → 暖色温偏移（+红 -蓝）→ 褪色降饱和 → 暗部提升 → 高光泛黄。
+
+### Performance / 性能
+
+| Metric | Old Algorithm | New LUT |
+|--------|--------------|--------|
+| Per-pixel ops | 5-15 arithmetic operations | 1 memory read |
+| Flash usage | ~0 KB | +384 KB (3 LUTs) |
+| SRAM usage | ~640 bytes (row buffer) | 0 bytes |
+| Code complexity | ~267 lines | ~95 lines |
 
 
 ## License

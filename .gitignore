@@ -5,3 +5,4 @@
 .vscode/ipch
 prompt.txt
 .gitignore
+tools/luts

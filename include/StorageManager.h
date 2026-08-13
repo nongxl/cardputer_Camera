@@ -16,6 +16,10 @@ public:
     static bool loadCameraStatus(JsonDocument& doc);
     static bool createDirectory(const char* path);
     static bool exists(const char* path);
+    
+    // USB Mass Storage 虚拟磁碟模式接口
+    static void startUSBMSC();
+    static void stopUSBMSC();
 };
 
 #endif // STORAGE_MANAGER_H
