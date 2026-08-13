@@ -15,12 +15,23 @@
 #define GLOBAL_MAX_JPEG_SIZE 64 * 1024 // 64KB
 #define MIN_JPEG_SIZE 2000            // 2KB
 
-// UI 配色标准
-#define UI_COLOR_TITLE   TFT_CYAN
-#define UI_COLOR_TEXT    TFT_WHITE
-#define UI_COLOR_ACCENT  TFT_ORANGE
-#define UI_COLOR_BG      TFT_BLACK
-#define UI_COLOR_BAR_BG  TFT_DARKGREY
+// M5 丝印贴纸缤纷色彩定义 (RGB565 16-bit)
+#define M5_COLOR_ORANGE   0xFA60  // M5 标志亮橙 (#FF6A00)
+#define M5_COLOR_YELLOW   0xFFE0  // 贴纸亮黄 (#FFE600)
+#define M5_COLOR_CYAN     0x07FF  // 电光青 (#00E5FF)
+#define M5_COLOR_PINK     0xF81F  // 霓虹粉紫 (#FF2D55)
+#define M5_COLOR_GREEN    0x07E0  // 荧光绿 (#00FF66)
+#define M5_COLOR_DARK_BG  0x10A2  // 深青灰底色 (#121620)
+#define M5_COLOR_CARD_BG  0x2128  // 深卡片背景色 (#202636)
+#define M5_COLOR_WHITE    0xFFFF  // 纯白
+#define M5_COLOR_BLACK    0x0000  // 纯黑
+
+// UI 配色标准重映射
+#define UI_COLOR_TITLE   M5_COLOR_YELLOW
+#define UI_COLOR_TEXT    M5_COLOR_WHITE
+#define UI_COLOR_ACCENT  M5_COLOR_ORANGE
+#define UI_COLOR_BG      M5_COLOR_DARK_BG
+#define UI_COLOR_BAR_BG  M5_COLOR_CARD_BG
 
 // 状态机定义
 enum StreamState {

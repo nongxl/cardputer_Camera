@@ -14,11 +14,11 @@ public:
     static void showHelp();
     static bool renderStream();
     static void renderTimelapse(int photoCount, unsigned long lastShotTime, unsigned long interval);
-    static void processAndSaveFilteredPhoto(const String& originalPath);
+    static void processAndSaveFilteredPhoto(const String& originalPath, bool keepOriginal = false);
     static void clear();
 };
 
-extern M5Canvas canvas;
-extern M5Canvas mainCanvas;
+extern M5Canvas* canvas;
+extern M5Canvas* mainCanvas;
 
 #endif // UI_MANAGER_H

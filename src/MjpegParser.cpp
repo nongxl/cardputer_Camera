@@ -49,7 +49,6 @@ void MjpegParser::handleByte(uint8_t c) {
                     if (c == 0xD8) appState.networkBuffer[appState.networkSize++] = c;
                     else if (c != 0xFF) appState.networkSize = 0;
                 } else {
-                    // 仅在容量允许时存入缓冲区
                     if (appState.networkSize < GLOBAL_MAX_JPEG_SIZE) {
                         appState.networkBuffer[appState.networkSize++] = c;
                     }
@@ -57,7 +56,6 @@ void MjpegParser::handleByte(uint8_t c) {
 
                     // 识别到结束符 (EOI)
                     if (isEOI) {
-                        // 只有在数据完整且未溢出的情况下才显示
                         if (appState.networkSize >= 2048 && appState.networkSize < GLOBAL_MAX_JPEG_SIZE) {
                             if (!appState.sizeCached) {
                                 int w = 0, h = 0;
@@ -70,12 +68,10 @@ void MjpegParser::handleByte(uint8_t c) {
                             }
                             appState.currentState = STATE_DISPLAYING;
                         } else {
-                            // 溢出或数据异常，重置大小准备下一帧
                             appState.networkSize = 0;
                         }
                         appState.parseState = AppState::P_BOUNDARY;
                     } 
-                    // 熔断保护：防止在极端断流情况下无限等待 (64KB)
                     else if (appState.frameReadCount >= GLOBAL_MAX_JPEG_SIZE) {
                         appState.networkSize = 0;
                         appState.parseState = AppState::P_BOUNDARY;
@@ -106,12 +102,71 @@ void MjpegParser::processStream(WiFiClient& client, bool forceReset) {
 
     if (appState.currentState == STATE_DISPLAYING) return;
 
+    // 网络 Socket 赶帧防积压：大动态转动时若积压深，迅速清理旧滞后包
+    if (client.available() > 8192) {
+        while (client.available() > 4096) {
+            uint8_t dummy[512];
+            client.read(dummy, sizeof(dummy));
+        }
+    }
+
     while (true) {
         if (cachePos >= cacheLen) {
             if (client.available() == 0) break;
             cachePos = 0;
             cacheLen = client.read(readCache, sizeof(readCache));
             if (cacheLen <= 0) break;
+        }
+
+        // 块加速传输：当处于 JPEG 数据体且有大量 cache 剩余时，进行极速 block memcpy
+        if (appState.parseState == AppState::P_JPEG_DATA && cState == ChunkState::CS_DATA && appState.networkSize >= 2) {
+            int remInCache = cacheLen - cachePos;
+            if (remInCache > 2) {
+                uint8_t* p = &readCache[cachePos];
+                int copyN = remInCache;
+                bool foundEOI = false;
+                
+                // 限制不超过 current chunk 剩余长度
+                if (chunkSize > 0 && (uint32_t)copyN > chunkSize) {
+                    copyN = chunkSize;
+                }
+                
+                // 搜索是否包含 EOI (0xFF 0xD9)
+                for (int i = 0; i < copyN - 1; i++) {
+                    if (p[i] == 0xFF && p[i + 1] == 0xD9) {
+                        copyN = i + 2;
+                        foundEOI = true;
+                        break;
+                    }
+                }
+                
+                if (appState.networkSize + copyN > GLOBAL_MAX_JPEG_SIZE) {
+                    copyN = GLOBAL_MAX_JPEG_SIZE - appState.networkSize;
+                }
+                
+                if (copyN > 0) {
+                    memcpy(&appState.networkBuffer[appState.networkSize], p, copyN);
+                    appState.networkSize += copyN;
+                    appState.frameReadCount += copyN;
+                    appState.lastByte = p[copyN - 1];
+                    cachePos += copyN;
+                    if (chunkSize >= (uint32_t)copyN) chunkSize -= copyN;
+                    else chunkSize = 0;
+                    
+                    if (chunkSize == 0) cState = ChunkState::CS_TRAILER;
+                    
+                    if (foundEOI) {
+                        if (appState.networkSize >= 2048) {
+                            appState.currentState = STATE_DISPLAYING;
+                        } else {
+                            appState.networkSize = 0;
+                        }
+                        appState.parseState = AppState::P_BOUNDARY;
+                        return;
+                    }
+                    continue;
+                }
+            }
         }
 
         uint8_t c = readCache[cachePos++];

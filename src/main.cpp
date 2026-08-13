@@ -22,6 +22,9 @@ static bool pendingStatusRefresh = false;
 static unsigned long lastParamChangeTime = 0;
 const unsigned long STATUS_REFRESH_DELAY = 500; // 0.5秒后刷新
 
+static uint32_t wifiConnectTime = 0;
+static bool hasFirstFrameRendered = false;
+
 void setup() {
     M5Cardputer.begin();
     Serial.begin(115200);
@@ -45,8 +48,11 @@ void setup() {
         CameraClient::setResolution(CAMERA_RESOLUTION_LOW);
         CameraClient::setQuality(CAMERA_QUALITY_STREAM);
         appState.isRestartStream = true;
+        wifiConnectTime = millis();
+        hasFirstFrameRendered = false;
     } else {
         UIManager::displayLine("WiFi failed!");
+        UIManager::displayLine("Press BtnRst (Top-Left)");
     }
 }
 
@@ -213,15 +219,18 @@ void loop() {
     static bool isBurst = false;
     static int burstCount = 0;
     static unsigned long lastBurstTime = 0;
-    
+    static unsigned long captureTs = 0; // 统一时间戳，联结 FX BMP 与原片 JPG
+
     if (M5Cardputer.BtnA.isPressed()) {
         if (!isBtnPressed) {
             isBtnPressed = true;
             btnStartTime = millis();
+            captureTs = millis();
             isBurst = false;
             burstCount = 0;
+
             streamClient.stop();
-            CameraClient::setResolution(CAMERA_RESOLUTION_HIGH);
+            CameraClient::setResolution(CAMERA_RESOLUTION_HIGH); // 始终用最高分辨率拍摄原片
             delay(200);
         } else if (millis() - btnStartTime > 500) {
             if (millis() - lastBurstTime > 200) {
@@ -241,15 +250,13 @@ void loop() {
         if (!isBurst) {
             CameraClient::triggerCapture();
             delay(100);
-            unsigned long ts = millis();
             char filename[64];
-            sprintf(filename, "/images/IMG_%lu.jpg", ts);
+            sprintf(filename, "/images/IMG_%lu.jpg", captureTs);
             if (CameraClient::downloadPhoto(filename)) {
-                snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "Saved: %lu", ts);
+                snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), "Saved: %lu", captureTs);
                 appState.overlayTimestamp = millis();
-                // 创意滤镜后期处理
                 if (FilterManager::getFilter() != FILTER_NONE) {
-                    UIManager::processAndSaveFilteredPhoto(filename);
+                    UIManager::processAndSaveFilteredPhoto(filename, true);
                 }
             }
         }
@@ -296,8 +303,23 @@ void loop() {
         lastDisplayTime = millis();
         if (UIManager::renderStream()) {
             fpsFrameCount++;
+            hasFirstFrameRendered = true; // 成功绘制第一帧实时取景
         }
         appState.currentState = STATE_RECEIVING;
+    }
+
+    // 开机显示 IP 后等待 > 2 秒未进入取景画面的异常处理
+    if (WiFi.status() == WL_CONNECTED && !hasFirstFrameRendered && wifiConnectTime > 0) {
+        if (millis() - wifiConnectTime > 2000) {
+            static unsigned long lastTimeoutPrompt = 0;
+            if (millis() - lastTimeoutPrompt > 1500) {
+                lastTimeoutPrompt = millis();
+                UIManager::displayLine("Stream Timeout (>2s)!");
+                UIManager::displayLine("Press BtnRst (Top-Left)");
+                streamClient.stop();
+                appState.isRestartStream = true;
+            }
+        }
     }
     
     // FPS Calc

@@ -43,6 +43,7 @@ public:
      * @param w,h     有效图像宽高
      */
     static void applyToCanvas(M5Canvas& canvas, int x, int y, int w, int h);
+    static const uint16_t* getCurrentLUT();
 
 private:
     // 通用 LUT 颜色映射 (所有纯色滤镜共用)
@@ -52,9 +53,6 @@ private:
     // 像素化空间效果 (LUT 映射 + block fill)
     static void applyPixelate(M5Canvas& canvas, int x, int y, int w, int h,
                               const uint16_t* lut);
-
-    // 获取当前滤镜对应的 LUT 指针
-    static const uint16_t* getCurrentLUT();
 };
 
 #endif // FILTER_MANAGER_H

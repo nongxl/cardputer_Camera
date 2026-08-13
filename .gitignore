@@ -4,5 +4,9 @@
 .vscode/launch.json
 .vscode/ipch
 prompt.txt
-.gitignore
 tools/luts
+tools/luts_backup
+todolist.md
+
+# 自动生成的 LUT 头文件（由 tools/generate_luts.py 生成，不提交）
+include/lut_*.h
