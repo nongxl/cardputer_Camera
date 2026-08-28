@@ -88,7 +88,8 @@ void MjpegParser::processStream(WiFiClient& client, bool forceReset) {
     static uint32_t chunkSize = 0;
     static String sizeBuf = "";
     
-    static uint8_t readCache[1024];
+    // 升级 4KB Socket 扩展高吞吐缓存，单次读尽大包
+    static uint8_t readCache[4096];
     static int cachePos = 0;
     static int cacheLen = 0;
 
@@ -102,15 +103,8 @@ void MjpegParser::processStream(WiFiClient& client, bool forceReset) {
 
     if (appState.currentState == STATE_DISPLAYING) return;
 
-    // 网络 Socket 赶帧防积压：大动态转动时若积压深，迅速清理旧滞后包
-    if (client.available() > 8192) {
-        while (client.available() > 4096) {
-            uint8_t dummy[512];
-            client.read(dummy, sizeof(dummy));
-        }
-    }
-
-    while (true) {
+    // 零斩断机制：绝不盲目丢弃/截断流字节，保护 JPEG 完整结构，杜绝大动态转动时 0 帧死锁
+    while (appState.currentState != STATE_DISPLAYING) {
         if (cachePos >= cacheLen) {
             if (client.available() == 0) break;
             cachePos = 0;
@@ -118,7 +112,7 @@ void MjpegParser::processStream(WiFiClient& client, bool forceReset) {
             if (cacheLen <= 0) break;
         }
 
-        // 块加速传输：当处于 JPEG 数据体且有大量 cache 剩余时，进行极速 block memcpy
+        // 块加速传输：处于 JPEG 数据体时进行极速 4KB block memcpy 批量写入
         if (appState.parseState == AppState::P_JPEG_DATA && cState == ChunkState::CS_DATA && appState.networkSize >= 2) {
             int remInCache = cacheLen - cachePos;
             if (remInCache > 2) {
@@ -126,12 +120,11 @@ void MjpegParser::processStream(WiFiClient& client, bool forceReset) {
                 int copyN = remInCache;
                 bool foundEOI = false;
                 
-                // 限制不超过 current chunk 剩余长度
                 if (chunkSize > 0 && (uint32_t)copyN > chunkSize) {
                     copyN = chunkSize;
                 }
                 
-                // 搜索是否包含 EOI (0xFF 0xD9)
+                // 搜索 EOI (0xFF 0xD9)
                 for (int i = 0; i < copyN - 1; i++) {
                     if (p[i] == 0xFF && p[i + 1] == 0xD9) {
                         copyN = i + 2;
