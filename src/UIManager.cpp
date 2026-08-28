@@ -432,7 +432,7 @@ bool UIManager::renderStream() {
         FilterManager::applyToCanvas(*canvas, 0, 0, canvas->width(), canvas->height());
     }
     if (drawSuccess) {
-        // 0 角度旋转放缩：充满 240x135 屏幕
+        // 0 角度旋转放缩：160x120 放大 1.5 倍 -> 240x180 居中充满 240x135 屏幕 (左右无黑边，上下轻微裁切)
         canvas->pushRotateZoom(mainCanvas, mainCanvas->width() / 2, mainCanvas->height() / 2, 0.0f, 1.5f, 1.5f);
         
         // 1. 滤镜 Badge (若启用，UI_COLOR_SELECT_BG 亮黄底 + UI_COLOR_SELECT_TXT 纯黑字)
