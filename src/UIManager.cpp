@@ -432,10 +432,10 @@ bool UIManager::renderStream() {
         FilterManager::applyToCanvas(*canvas, 0, 0, canvas->width(), canvas->height());
     }
     if (drawSuccess) {
-        // 恢复 1.5 倍 Center Crop 填充渲染，使取景图像完美充满 240x135 全屏
-        canvas->pushRotateZoom(mainCanvas, mainCanvas->width()/2, mainCanvas->height()/2, 0, 1.5f, 1.5f);
+        // 0 角度旋转放缩：充满 240x135 屏幕
+        canvas->pushRotateZoom(mainCanvas, mainCanvas->width() / 2, mainCanvas->height() / 2, 0.0f, 1.5f, 1.5f);
         
-        // 滤镜 Badge (若启用，UI_COLOR_SELECT_BG 亮黄底 + UI_COLOR_SELECT_TXT 纯黑字)
+        // 1. 滤镜 Badge (若启用，UI_COLOR_SELECT_BG 亮黄底 + UI_COLOR_SELECT_TXT 纯黑字)
         FilterMode fm = FilterManager::getFilter();
         if (fm != FILTER_NONE) {
             static FilterMode lastFm = FILTER_NONE;
@@ -457,7 +457,7 @@ bool UIManager::renderStream() {
             mainCanvas->print(cachedLutName);
         }
         
-        // 3. 右上角 FPS 与 SRAM 极客监控 Badge (UI_COLOR_SURFACE 暗底 + UI_COLOR_BORDER 青框 + UI_COLOR_METRIC 绿字)
+        // 2. 右上角 FPS 与 SRAM 极客监控 Badge
         static uint32_t lastOverlayUpdate = 0;
         static char cachedFpsBuf[32] = "0.0fps";
         static int cachedFpsW = 44;
@@ -477,7 +477,7 @@ bool UIManager::renderStream() {
         mainCanvas->setCursor(cachedFpsX + 4, 7);
         mainCanvas->print(cachedFpsBuf);
         
-        // 4. 全屏四角极客视距折角框 (UI_COLOR_BORDER 电光青)
+        // 3. 全屏四角极客视距折角框 (UI_COLOR_BORDER 电光青)
         uint16_t bracketColor = UI_COLOR_BORDER;
         mainCanvas->drawFastHLine(3, 3, 10, bracketColor);
         mainCanvas->drawFastVLine(3, 3, 10, bracketColor);
@@ -494,7 +494,12 @@ bool UIManager::renderStream() {
         if (FilterManager::isFilterListOpen()) {
             drawFilterMenu();
         }
+
+        // 4. SPI Bus 硬件锁定直推：用 startWrite / endWrite 锁住 SPI 总线，启用连发无缝直推 LCD
+        M5Cardputer.Display.startWrite();
         mainCanvas->pushSprite(&M5Cardputer.Display, 0, 0);
+        M5Cardputer.Display.endWrite();
+
         appState.consecutiveErrors = 0;
     } else {
         appState.consecutiveErrors++;
@@ -624,8 +629,37 @@ static int JPEGDraw(JPEGDRAW *pDraw) {
 
                 uint16_t c = pDraw->pPixels[y * pDraw->iWidth + x];
                 uint16_t fc = c;
+                
+                // 像素滤镜 Photo2Pixel 特效：补全照片保存时的 Posterize 色阶硬坍缩
+                if (FilterManager::getFilter() == FILTER_PIXELATE) {
+                    int r = ((c >> 11) & 0x1F) << 3;
+                    int g = ((c >> 5)  & 0x3F) << 2;
+                    int b = (c         & 0x1F) << 3;
+
+                    auto posterize = [](int val) -> int {
+                        if (val < 42)  return 0;
+                        if (val < 128) return 85;
+                        if (val < 212) return 170;
+                        return 255;
+                    };
+                    int pR = posterize(r);
+                    int pG = posterize(g);
+                    int pB = posterize(b);
+
+                    int lum = (pR * 77 + pG * 150 + pB * 29) >> 8;
+                    if (lum < 30) {
+                        pR = (pR > 30) ? pR - 30 : 0;
+                        pG = (pG > 30) ? pG - 30 : 0;
+                        pB = (pB > 30) ? pB - 30 : 0;
+                    } else if (lum > 220) {
+                        pR = 255; pG = 255; pB = 255;
+                    }
+
+                    fc = ((pR >> 3) << 11) | ((pG >> 2) << 5) | (pB >> 3);
+                }
+
                 if (filterLut) {
-                    uint16_t idx = ((c >> 1) & 0x7FE0) | (c & 0x001F);
+                    uint16_t idx = ((fc >> 1) & 0x7FE0) | (fc & 0x001F);
                     fc = filterLut[idx];
                 }
 

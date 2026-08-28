@@ -135,24 +135,67 @@ void FilterManager::applyLUT(M5Canvas& canvas, int x, int y, int w, int h,
     }
 }
 
-// ── Pixelate: LUT 色彩映射 + 空间像素化 ──────────────────────
+// ── Pixelate Posterize: Photoshop 式色阶硬阶梯坍缩 + 纯色块靠拢像素风 ───────
 void FilterManager::applyPixelate(M5Canvas& canvas, int x, int y, int w, int h,
                                    const uint16_t* lut) {
-    const int BLOCK = CONFIG_PIXELATE_BLOCK_SIZE;
     int endX = x + w;
     int endY = y + h;
+    const int BLOCK = 3; // 3x3 块，兼顾大平涂纯色块感与轮廓可读性
 
     for (int by = y; by < endY; by += BLOCK) {
         for (int bx = x; bx < endX; bx += BLOCK) {
-            // 采样块左上角像素 → LUT 调色板映射
-            uint16_t c = canvas.readPixel(bx, by);
-            uint16_t idx = ((c >> 1) & 0x7FE0) | (c & 0x001F);
-            uint16_t blockColor = lut[idx];
-
-            // 空间像素化：整块填充同一颜色
             int bEndX = bx + BLOCK; if (bEndX > endX) bEndX = endX;
             int bEndY = by + BLOCK; if (bEndY > endY) bEndY = endY;
-            canvas.fillRect(bx, by, bEndX - bx, bEndY - by, blockColor);
+
+            // 1. 采样块内平均 RGB
+            uint32_t rSum = 0, gSum = 0, bSum = 0;
+            int count = 0;
+            for (int py = by; py < bEndY; py++) {
+                for (int px = bx; px < bEndX; px++) {
+                    uint16_t pixel = canvas.readPixel(px, py);
+                    rSum += ((pixel >> 11) & 0x1F) << 3;
+                    gSum += ((pixel >> 5)  & 0x3F) << 2;
+                    bSum += (pixel         & 0x1F) << 3;
+                    count++;
+                }
+            }
+            if (count == 0) continue;
+
+            uint8_t avgR = rSum / count;
+            uint8_t avgG = gSum / count;
+            uint8_t avgB = bSum / count;
+
+            // 2. Photoshop 式 Posterize 阶梯化 (将 0~255 强制塌陷为 4 个硬颜色阶梯)
+            auto posterizeChannel = [](uint8_t val) -> uint8_t {
+                if (val < 42)  return 0;
+                if (val < 128) return 85;
+                if (val < 212) return 170;
+                return 255;
+            };
+
+            uint8_t pR = posterizeChannel(avgR);
+            uint8_t pG = posterizeChannel(avgG);
+            uint8_t pB = posterizeChannel(avgB);
+
+            // 3. Threshold 边缘极性靠拢强化 (将过渡带向高亮/深暗纯色硬靠拢)
+            uint8_t lum = (uint8_t)((pR * 77 + pG * 150 + pB * 29) >> 8);
+            if (lum < 30) {
+                pR = (pR > 30) ? pR - 30 : 0;
+                pG = (pG > 30) ? pG - 30 : 0;
+                pB = (pB > 30) ? pB - 30 : 0;
+            } else if (lum > 220) {
+                pR = 255; pG = 255; pB = 255;
+            }
+
+            uint16_t finalColor = ((pR >> 3) << 11) | ((pG >> 2) << 5) | (pB >> 3);
+
+            if (lut) {
+                uint16_t idx = ((finalColor >> 1) & 0x7FE0) | (finalColor & 0x001F);
+                finalColor = lut[idx];
+            }
+
+            // 4. 填充纯色块
+            canvas.fillRect(bx, by, bEndX - bx, bEndY - by, finalColor);
         }
     }
 }

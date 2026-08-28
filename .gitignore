@@ -7,6 +7,7 @@ prompt.txt
 tools/luts
 tools/luts_backup
 todolist.md
+docs/
 
 # 自动生成的 LUT 头文件（由 tools/generate_luts.py 生成，不提交）
 include/lut_*.h
