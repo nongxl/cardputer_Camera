@@ -298,8 +298,8 @@ void loop() {
         }
     }
     
-    // Display Logic
-    if (appState.currentState == STATE_DISPLAYING && millis() - lastDisplayTime >= minFrameInterval) {
+    // Display Logic: 一旦 MJPEG 帧解析就绪，零延迟立即打屏渲染，冲刺硬件物理最高 FPS
+    if (appState.currentState == STATE_DISPLAYING) {
         lastDisplayTime = millis();
         if (UIManager::renderStream()) {
             fpsFrameCount++;
