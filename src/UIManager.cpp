@@ -449,18 +449,18 @@ static int streamJPEGDraw(JPEGDRAW *pDraw) {
     return 1;
 }
 
-static JPEGDEC streamJpegDec;
+static JPEGDEC sharedJpegDec;
 
 bool UIManager::renderStream() {
     bool drawSuccess = false;
     
     // 挂载带 Xtensa SIMD/ASM 汇编加速的 JPEGDEC openRAM 1/2 降采样零拷贝流解压 (< 2ms)
-    if (streamJpegDec.openRAM((uint8_t*)appState.networkBuffer, appState.networkSize, streamJPEGDraw)) {
-        streamJpegDec.setPixelType(RGB565_BIG_ENDIAN);
-        if (streamJpegDec.decode(0, 0, JPEG_SCALE_HALF)) {
+    if (sharedJpegDec.openRAM((uint8_t*)appState.networkBuffer, appState.networkSize, streamJPEGDraw)) {
+        sharedJpegDec.setPixelType(RGB565_BIG_ENDIAN);
+        if (sharedJpegDec.decode(0, 0, JPEG_SCALE_HALF)) {
             drawSuccess = true;
         }
-        streamJpegDec.close();
+        sharedJpegDec.close();
     }
     
     // 备用兼容回退
@@ -595,34 +595,56 @@ void UIManager::renderTimelapse(int count, unsigned long last, unsigned long int
     mainCanvas->pushSprite(&M5Cardputer.Display, 0, 0);
 }
 
-#include <JPEGDEC.h>
+#ifdef INTELSHORT
+#undef INTELSHORT
+#endif
+#ifdef INTELLONG
+#undef INTELLONG
+#endif
+#ifdef MOTOSHORT
+#undef MOTOSHORT
+#endif
+#ifdef MOTOLONG
+#undef MOTOLONG
+#endif
+#include <JPEGENC.h>
 
-// Global/Static state variables for JPEGDEC callback access
-static File outBmpFile;
+// Global/Static state variables for JPEGDEC and JPEGENC callback access
 static File inJpgFile;
+static File outJpgFile;
 static const uint16_t* filterLut = nullptr;
-static int bmpWidth = 0;
-static int bmpHeight = 0;
-static int bmpRowSize = 0;
+static int imgWidth = 0;
+static int imgHeight = 0;
 static int currentChunkY = 0;
-static uint8_t* chunkRows[16] = {nullptr};
+static uint16_t* chunkBuffer = nullptr;
+
+static JPEGENC fxJpegEnc;
+static JPEGENCODE fxJpeState;
+
+// 4x4 Bayer 空间有序抖动矩阵，打散 5-bit 色阶量化硬阶梯，彻底消除平缓区域马赛克断层
+static const uint8_t bayer4x4[4][4] = {
+    {  0,  8,  2, 10 },
+    { 12,  4, 14,  6 },
+    {  3, 11,  1,  9 },
+    { 15,  7, 13,  5 }
+};
 
 // Custom callbacks for JPEGDEC filesystem stream decoding
 static void * myOpen(const char *szFilename, int32_t *pFileSize) {
     inJpgFile = SD.open(szFilename, FILE_READ);
     if (!inJpgFile) {
-        serialPrintf("[FX] Callback open failed for: %s\n", szFilename);
+        serialPrintf("[FX] inJpgFile open failed for: %s\n", szFilename);
         return nullptr;
     }
     *pFileSize = inJpgFile.size();
-    serialPrintf("[FX] Callback open success: %s (%d bytes)\n", szFilename, (int)*pFileSize);
+    serialPrintf("[FX] inJpgFile open success: %s (%d bytes)\n", szFilename, (int)*pFileSize);
     return &inJpgFile;
 }
 
 static void myClose(void *pHandle) {
     if (inJpgFile) {
         inJpgFile.close();
-        serialPrintf("[FX] Callback close file\n");
+        serialPrintf("[FX] inJpgFile closed\n");
     }
 }
 
@@ -637,39 +659,76 @@ static int32_t mySeek(JPEGFILE *handle, int32_t position) {
     return inJpgFile.position();
 }
 
-// JPEGDEC Callback function: assembles MCU blocks into 16-row chunks to allow high-speed sequential writes
-static int JPEGDraw(JPEGDRAW *pDraw) {
-    if (!outBmpFile) return 0;
+// Custom callbacks for JPEGENC filesystem stream encoding
+static void * encOpen(const char *szFilename) {
+    outJpgFile = SD.open(szFilename, FILE_WRITE);
+    if (!outJpgFile) {
+        serialPrintf("[FX] encOpen failed for: %s\n", szFilename);
+        return nullptr;
+    }
+    serialPrintf("[FX] encOpen success: %s\n", szFilename);
+    return &outJpgFile;
+}
 
-    // Check if the current MCU y-coordinate has advanced past our 16-row memory buffer block
+static void encClose(JPEGE_FILE *pFile) {
+    if (outJpgFile) {
+        outJpgFile.close();
+        serialPrintf("[FX] encClose file\n");
+    }
+}
+
+static int32_t encRead(JPEGE_FILE *pFile, uint8_t *pBuf, int32_t iLen) {
+    if (!outJpgFile) return 0;
+    return outJpgFile.read(pBuf, iLen);
+}
+
+static int32_t encWrite(JPEGE_FILE *pFile, uint8_t *pBuf, int32_t iLen) {
+    if (!outJpgFile) return 0;
+    return outJpgFile.write(pBuf, iLen);
+}
+
+static int32_t encSeek(JPEGE_FILE *pFile, int32_t iPosition) {
+    if (!outJpgFile) return -1;
+    if (!outJpgFile.seek(iPosition)) return -1;
+    return outJpgFile.position();
+}
+
+// Flush current 16-row chunk buffer to the JPEG encoder
+static void flushChunkToEncoder() {
+    if (!chunkBuffer || imgWidth <= 0) return;
+    int mcuCountH = (imgWidth + 15) / 16;
+    int rowPitch = imgWidth * sizeof(uint16_t);
+    for (int mcuX = 0; mcuX < mcuCountH; mcuX++) {
+        uint8_t* pMCU = (uint8_t*)(chunkBuffer + mcuX * 16);
+        fxJpegEnc.addMCU(&fxJpeState, pMCU, rowPitch);
+    }
+    currentChunkY += 16;
+    memset(chunkBuffer, 0, 16 * imgWidth * sizeof(uint16_t));
+}
+
+// JPEGDEC Callback function: assembles MCU blocks into 16-row chunks and applies LUT + Dither
+static int JPEGDraw(JPEGDRAW *pDraw) {
+    if (!chunkBuffer) return 0;
+
+    // Flush previous 16 rows when current MCU y advances
     while (pDraw->y >= currentChunkY + 16) {
-        // Flush all 16 rows sequentially to the BMP file
-        for (int i = 0; i < 16; i++) {
-            if (chunkRows[i]) {
-                outBmpFile.write(chunkRows[i], bmpRowSize);
-            }
-        }
-        currentChunkY += 16;
-        for (int i = 0; i < 16; i++) {
-            if (chunkRows[i]) {
-                memset(chunkRows[i], 0, bmpRowSize);
-            }
-        }
+        flushChunkToEncoder();
     }
 
-    // Assemble this MCU block's pixel rows into our 16-row memory buffers
+    // Assemble this MCU block's pixel rows into our 16-row memory buffer
     for (int y = 0; y < pDraw->iHeight; y++) {
         int globalY = pDraw->y + y;
         int localY = globalY - currentChunkY;
 
-        if (localY >= 0 && localY < 16 && chunkRows[localY]) {
+        if (localY >= 0 && localY < 16) {
+            uint16_t* pRow = chunkBuffer + localY * imgWidth;
             for (int x = 0; x < pDraw->iWidth; x++) {
                 int globalX = pDraw->x + x;
-                if (globalX >= bmpWidth) continue;
+                if (globalX >= imgWidth) continue;
 
                 uint16_t c = pDraw->pPixels[y * pDraw->iWidth + x];
                 uint16_t fc = c;
-                
+
                 // 像素滤镜 Photo2Pixel 特效：补全照片保存时的 Posterize 色阶硬坍缩
                 if (FilterManager::getFilter() == FILTER_PIXELATE) {
                     int r = ((c >> 11) & 0x1F) << 3;
@@ -701,14 +760,29 @@ static int JPEGDraw(JPEGDRAW *pDraw) {
                 if (filterLut) {
                     uint16_t idx = ((fc >> 1) & 0x7FE0) | (fc & 0x001F);
                     fc = filterLut[idx];
+
+                    // 空间有序抖动微调 (Bayer Dithering)
+                    uint8_t d = bayer4x4[globalY & 3][globalX & 3]; // 0..15
+                    int r = (fc >> 11) & 0x1F;
+                    int g = (fc >> 5)  & 0x3F;
+                    int b = fc         & 0x1F;
+
+                    if (d >= 12) {
+                        if (r < 31) r++;
+                        if (b < 31) b++;
+                    } else if (d < 4) {
+                        if (r > 0) r--;
+                        if (b > 0) b--;
+                    }
+                    if (d == 7 || d == 11) {
+                        if (g < 63) g++;
+                    } else if (d == 0 || d == 4) {
+                        if (g > 0) g--;
+                    }
+                    fc = (r << 11) | (g << 5) | b;
                 }
 
-                // Write pixel in BGR888 format into the corresponding row buffer
-                int bufIdx = globalX * 3;
-                uint8_t* pixelPtr = chunkRows[localY] + bufIdx;
-                pixelPtr[2] = ((fc >> 11) & 0x1F) << 3; // R
-                pixelPtr[1] = ((fc >> 5)  & 0x3F) << 2; // G
-                pixelPtr[0] = (fc         & 0x1F) << 3; // B
+                pRow[globalX] = fc;
             }
         }
     }
@@ -716,17 +790,17 @@ static int JPEGDraw(JPEGDRAW *pDraw) {
 }
 
 void UIManager::processAndSaveFilteredPhoto(const String& path, bool keepOriginal) {
-    serialPrintf("[FX] Entering processAndSaveFilteredPhoto...\n");
+    uint32_t startTime = millis();
+    serialPrintf("[FX] Entering processAndSaveFilteredPhoto: %s...\n", path.c_str());
     if (FilterManager::getFilter() == FILTER_NONE) {
         serialPrintf("[FX] No filter active, return\n");
         return;
     }
 
     // Allow the file system to completely flush the written JPG
-    delay(150);
+    delay(100);
 
     // 零黑屏：不清空 LCD 屏幕，定格保留按下快门瞬间的画面，仅在画面下方叠加 FX Processing 贴纸胶囊
-    // 零黑屏：定格快门画面，叠加 UI_COLOR_ALERT (粉紫) + UI_COLOR_SELECT_BG (黄框) 贴纸胶囊
     M5Cardputer.Display.fillRect(40, 108, 160, 18, UI_COLOR_ALERT);
     M5Cardputer.Display.drawRect(40, 108, 160, 18, UI_COLOR_SELECT_BG);
     M5Cardputer.Display.setTextColor(UI_COLOR_TEXT_MAIN);
@@ -735,103 +809,87 @@ void UIManager::processAndSaveFilteredPhoto(const String& path, bool keepOrigina
     M5Cardputer.Display.print("FX Processing...");
 
     // Print free system RAM
-    serialPrintf("[FX] Free SRAM Heap (Canvases Active & Untouched): %d bytes\n", (int)ESP.getFreeHeap());
+    serialPrintf("[FX] Free SRAM Heap: %d bytes\n", (int)ESP.getFreeHeap());
 
     bool saved = false;
 
-    serialPrintf("[FX] Initializing JPEGDEC on heap...\n");
-    JPEGDEC* jpeg = new JPEGDEC();
-    if (!jpeg) {
-        serialPrintf("[FX] Failed to allocate JPEGDEC on heap\n");
-    } else {
-        serialPrintf("[FX] Opening input JPG file stream: %s\n", path.c_str());
-        if (jpeg->open(path.c_str(), myOpen, myClose, myRead, mySeek, JPEGDraw)) {
-            int W = jpeg->getWidth();
-            int H = jpeg->getHeight();
-            serialPrintf("[FX] JPEGDEC parsed dimensions: %dx%d\n", W, H);
-
-            String pfx = path;
-            pfx.replace(".jpg", "_FX.bmp");
-
-            serialPrintf("[FX] Opening output BMP file: %s\n", pfx.c_str());
-            outBmpFile = SD.open(pfx, FILE_WRITE);
-            if (!outBmpFile) {
-                serialPrintf("[FX] Failed to create output BMP\n");
-            } else {
-                bmpWidth = W;
-                bmpHeight = H;
-                bmpRowSize = (W * 3 + 3) & ~3; // 4-byte aligned BMP row size
-                
-                // Borrow the inactive mainCanvas pixel buffer (64.8KB contiguous SRAM) 
-                // to store our 16 row buffers (needs 30.7KB) during decoding.
-                // This eliminates any heap allocation or fragmentation risk.
-                uint8_t* basePtr = (uint8_t*)mainCanvas->getBuffer();
-                if (!basePtr) {
-                    serialPrintf("[FX] Critical Error: mainCanvas buffer is null!\n");
-                } else {
-                    serialPrintf("[FX] Successfully borrowed mainCanvas buffer at %p\n", basePtr);
-                    for (int i = 0; i < 16; i++) {
-                        chunkRows[i] = basePtr + i * bmpRowSize;
-                        memset(chunkRows[i], 0, bmpRowSize);
-                    }
-
-                    filterLut = FilterManager::getCurrentLUT();
-                    currentChunkY = 0;
-
-                    int fileSize = 54 + bmpRowSize * H;
-
-                    serialPrintf("[FX] Writing BMP Headers...\n");
-                    // 1. BMP Header (14 bytes)
-                    uint8_t header[14] = {'B', 'M', 0,0,0,0, 0,0, 0,0, 54,0,0,0};
-                    *(uint32_t*)(header + 2) = fileSize;
-                    outBmpFile.write(header, 14);
-
-                    // 2. Info Header (40 bytes)
-                    uint8_t info[40] = {40,0,0,0, 0,0,0,0, 0,0,0,0, 1,0, 24,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0};
-                    *(int32_t*)(info + 4) = W;
-                    *(int32_t*)(info + 8) = -H; // Negative height = Top-down BMP
-                    outBmpFile.write(info, 40);
-
-                    serialPrintf("[FX] Starting JPEG decoding...\n");
-                    if (jpeg->decode(0, 0, 0)) {
-                        serialPrintf("[FX] Flush remaining rows...\n");
-                        int remainingRows = H - currentChunkY;
-                        for (int i = 0; i < remainingRows; i++) {
-                            if (chunkRows[i]) {
-                                outBmpFile.write(chunkRows[i], bmpRowSize);
-                            }
-                        }
-                        saved = true;
-                        serialPrintf("[FX] Successfully saved %dx%d BMP via JPEGDEC sequential streaming\n", W, H);
-                    } else {
-                        serialPrintf("[FX] JPEGDEC decode failed\n");
-                    }
-
-                    // Reset our borrowed pointers without free()
-                    for (int i = 0; i < 16; i++) {
-                        chunkRows[i] = nullptr;
-                    }
-                }
-                outBmpFile.close();
-            }
-            jpeg->close();
-        } else {
-            serialPrintf("[FX] JPEGDEC open failed (file callbacks)\n");
-        }
-        delete jpeg;
-        jpeg = nullptr;
+    // Borrow the inactive mainCanvas pixel buffer (64.8KB contiguous SRAM)
+    // to store our 16 row buffers (needs 20.4KB for 640px) during decoding & encoding.
+    chunkBuffer = (mainCanvas != nullptr) ? (uint16_t*)mainCanvas->getBuffer() : nullptr;
+    if (!chunkBuffer) {
+        serialPrintf("[FX] Critical Error: mainCanvas buffer is null!\n");
+        return;
     }
+
+    serialPrintf("[FX] Opening input JPG file stream: %s\n", path.c_str());
+    sharedJpegDec.setPixelType(RGB565_LITTLE_ENDIAN);
+    if (sharedJpegDec.open(path.c_str(), myOpen, myClose, myRead, mySeek, JPEGDraw)) {
+        int W = sharedJpegDec.getWidth();
+        int H = sharedJpegDec.getHeight();
+        imgWidth = W;
+        imgHeight = H;
+        serialPrintf("[FX] JPEGDEC parsed dimensions: %dx%d\n", W, H);
+
+        size_t neededBytes = 16 * W * sizeof(uint16_t);
+        size_t maxCanvasBytes = 240 * 135 * 2;
+        if (neededBytes > maxCanvasBytes) {
+            serialPrintf("[FX] Critical Error: 16 rows (%d bytes) exceeds canvas buffer (%d bytes)!\n", (int)neededBytes, (int)maxCanvasBytes);
+            sharedJpegDec.close();
+            chunkBuffer = nullptr;
+            return;
+        }
+
+        memset(chunkBuffer, 0, neededBytes);
+        filterLut = FilterManager::getCurrentLUT();
+        currentChunkY = 0;
+
+        String pfx = path;
+        pfx.replace(".jpg", "_FX.jpg");
+
+        serialPrintf("[FX] Opening output JPG file stream: %s\n", pfx.c_str());
+        if (fxJpegEnc.open(pfx.c_str(), encOpen, encClose, encRead, encWrite, encSeek) == JPEGE_SUCCESS) {
+            if (fxJpegEnc.encodeBegin(&fxJpeState, W, H, JPEGE_PIXEL_RGB565, JPEGE_SUBSAMPLE_420, JPEGE_Q_HIGH) == JPEGE_SUCCESS) {
+                serialPrintf("[FX] Starting JPEG decoding and streaming encoding...\n");
+                if (sharedJpegDec.decode(0, 0, 0)) {
+                    // Flush any remaining rows
+                    if (currentChunkY < H) {
+                        flushChunkToEncoder();
+                    }
+                    int finalSize = fxJpegEnc.close();
+                    if (finalSize > 0) {
+                        saved = true;
+                        serialPrintf("[FX] Successfully saved %dx%d FX JPG: %d bytes (total %lu ms)\n", W, H, finalSize, millis() - startTime);
+                    } else {
+                        serialPrintf("[FX] JPEG encoder close returned size %d\n", finalSize);
+                    }
+                } else {
+                    serialPrintf("[FX] JPEGDEC decode failed\n");
+                    fxJpegEnc.close();
+                }
+            } else {
+                serialPrintf("[FX] JPEG encodeBegin failed\n");
+                fxJpegEnc.close();
+            }
+        } else {
+            serialPrintf("[FX] JPEG encoder open file failed\n");
+        }
+        sharedJpegDec.close();
+    } else {
+        serialPrintf("[FX] JPEGDEC open failed (file callbacks)\n");
+    }
+
+    chunkBuffer = nullptr;
 
     if (saved && !keepOriginal) {
         SD.remove(path.c_str());
     }
 
     if (!saved) {
-        serialPrintf("[FX] All processing methods failed, keeping original JPG\n");
+        serialPrintf("[FX] Processing failed, keeping original JPG\n");
     }
 
     // Clean mainCanvas content to prevent stale preview pixels
-    mainCanvas->clear();
+    if (mainCanvas) mainCanvas->clear();
 
     snprintf(appState.overlayMsg, sizeof(appState.overlayMsg), saved ? "FX Saved!" : "FX Failed");
     appState.overlayTimestamp = millis();
