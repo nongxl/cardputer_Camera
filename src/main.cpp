@@ -231,6 +231,7 @@ void loop() {
 
             streamClient.stop();
             CameraClient::setResolution(CAMERA_RESOLUTION_HIGH); // 始终用最高分辨率拍摄原片
+            CameraClient::setQuality(CAMERA_QUALITY_CAPTURE);    // 拍摄最高画质 (10: 最少压缩，极大降低DCT块效应)
             delay(200);
         } else if (millis() - btnStartTime > 500) {
             if (millis() - lastBurstTime > 200) {
@@ -261,6 +262,7 @@ void loop() {
             }
         }
         CameraClient::setResolution(CAMERA_RESOLUTION_LOW);
+        CameraClient::setQuality(CAMERA_QUALITY_STREAM);
         appState.isRestartStream = true;
     }
     

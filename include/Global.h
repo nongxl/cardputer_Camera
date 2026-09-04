@@ -9,8 +9,9 @@
 #define CAMERA_RESOLUTION_HIGH 10   // 高分辨率 640x480
 #define CAMERA_RESOLUTION_TIMELAPSE 10 // timelapse模式分辨率
 
-#define CAMERA_QUALITY_STREAM    2  // 串流模式画质
-#define CAMERA_QUALITY_TIMELAPSE 0  // timelapse拍摄画质
+#define CAMERA_QUALITY_STREAM    16 // 串流模式画质 (UnitCamS3 默认 16，网络低延迟流畅传输)
+#define CAMERA_QUALITY_CAPTURE   10 // 单张拍照最高画质 (10: 硬件稳定支持的最低压缩率/细节最丰富)
+#define CAMERA_QUALITY_TIMELAPSE 10 // timelapse拍摄画质
 
 #define GLOBAL_MAX_JPEG_SIZE 64 * 1024 // 64KB
 #define MIN_JPEG_SIZE 2000            // 2KB

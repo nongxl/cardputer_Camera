@@ -27,6 +27,9 @@ public:
     // 获取当前自定义 LUT 滤镜名称
     static const char* getCustomLutName();
 
+    // 获取当前活动滤镜的文件名标签 (如 "GameBoy", "Pixelate", "1_Cine4_Grieves")
+    static String getActiveFilterTag();
+
     // 滤镜菜单列表状态与操作接口
     static bool isFilterListOpen();
     static void toggleFilterList();

@@ -621,14 +621,6 @@ static uint16_t* chunkBuffer = nullptr;
 static JPEGENC fxJpegEnc;
 static JPEGENCODE fxJpeState;
 
-// 4x4 Bayer 空间有序抖动矩阵，打散 5-bit 色阶量化硬阶梯，彻底消除平缓区域马赛克断层
-static const uint8_t bayer4x4[4][4] = {
-    {  0,  8,  2, 10 },
-    { 12,  4, 14,  6 },
-    {  3, 11,  1,  9 },
-    { 15,  7, 13,  5 }
-};
-
 // Custom callbacks for JPEGDEC filesystem stream decoding
 static void * myOpen(const char *szFilename, int32_t *pFileSize) {
     inJpgFile = SD.open(szFilename, FILE_READ);
@@ -758,28 +750,23 @@ static int JPEGDraw(JPEGDRAW *pDraw) {
                 }
 
                 if (filterLut) {
-                    uint16_t idx = ((fc >> 1) & 0x7FE0) | (fc & 0x001F);
-                    fc = filterLut[idx];
+                    uint8_t r5 = (fc >> 11) & 0x1F;
+                    uint8_t g6 = (fc >> 5)  & 0x3F;
+                    uint8_t b5 = fc         & 0x1F;
 
-                    // 空间有序抖动微调 (Bayer Dithering)
-                    uint8_t d = bayer4x4[globalY & 3][globalX & 3]; // 0..15
-                    int r = (fc >> 11) & 0x1F;
-                    int g = (fc >> 5)  & 0x3F;
-                    int b = fc         & 0x1F;
+                    uint8_t g5 = g6 >> 1;
+                    uint16_t idx0 = ((uint16_t)r5 << 10) | ((uint16_t)g5 << 5) | b5;
 
-                    if (d >= 12) {
-                        if (r < 31) r++;
-                        if (b < 31) b++;
-                    } else if (d < 4) {
-                        if (r > 0) r--;
-                        if (b > 0) b--;
+                    // G通道 1-bit 高速无损插值：当绿色原值处于两个LUT采样点中间时取均值，消除色阶阶跃断层
+                    if ((g6 & 1) && g5 < 31) {
+                        uint16_t idx1 = ((uint16_t)r5 << 10) | ((uint16_t)(g5 + 1) << 5) | b5;
+                        uint16_t c0 = filterLut[idx0];
+                        uint16_t c1 = filterLut[idx1];
+                        // 1指令单周期 RGB565 并行平均算法
+                        fc = (c0 & c1) + (((c0 ^ c1) & 0xF7DE) >> 1);
+                    } else {
+                        fc = filterLut[idx0];
                     }
-                    if (d == 7 || d == 11) {
-                        if (g < 63) g++;
-                    } else if (d == 0 || d == 4) {
-                        if (g > 0) g--;
-                    }
-                    fc = (r << 11) | (g << 5) | b;
                 }
 
                 pRow[globalX] = fc;
@@ -843,8 +830,13 @@ void UIManager::processAndSaveFilteredPhoto(const String& path, bool keepOrigina
         filterLut = FilterManager::getCurrentLUT();
         currentChunkY = 0;
 
+        String tag = FilterManager::getActiveFilterTag();
         String pfx = path;
-        pfx.replace(".jpg", "_FX.jpg");
+        if (tag.length() > 0) {
+            pfx.replace(".jpg", "_" + tag + ".jpg");
+        } else {
+            pfx.replace(".jpg", "_FX.jpg");
+        }
 
         serialPrintf("[FX] Opening output JPG file stream: %s\n", pfx.c_str());
         if (fxJpegEnc.open(pfx.c_str(), encOpen, encClose, encRead, encWrite, encSeek) == JPEGE_SUCCESS) {

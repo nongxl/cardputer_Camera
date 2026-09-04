@@ -107,6 +107,37 @@ const char* FilterManager::getCustomLutName() {
     return "";
 }
 
+// 获取当前活动滤镜的文件名标签 (如 "GameBoy", "Pixelate", "1_Cine4_Grieves")
+String FilterManager::getActiveFilterTag() {
+    switch (currentFilter) {
+        case FILTER_GAMEBOY:  return "GameBoy";
+        case FILTER_PIXELATE: return "Pixelate";
+        case FILTER_CUSTOM: {
+            const char* raw = getCustomLutName();
+            if (!raw || strlen(raw) == 0) return "Custom";
+            String tag = "";
+            bool lastUnder = false;
+            for (size_t i = 0; i < strlen(raw); i++) {
+                char ch = raw[i];
+                if (isalnum(ch)) {
+                    tag += ch;
+                    lastUnder = false;
+                } else {
+                    if (!lastUnder && tag.length() > 0) {
+                        tag += '_';
+                        lastUnder = true;
+                    }
+                }
+            }
+            while (tag.endsWith("_")) {
+                tag.remove(tag.length() - 1);
+            }
+            return (tag.length() > 0) ? tag : "Custom";
+        }
+        default: return "";
+    }
+}
+
 // ── LUT 指针获取 ──────────────────────────────────────────────
 const uint16_t* FilterManager::getCurrentLUT() {
     switch (currentFilter) {

@@ -27,7 +27,7 @@ bool TimelapseManager::start() {
     currentDir = dirname;
     
     CameraClient::setResolution(CAMERA_RESOLUTION_TIMELAPSE);
-    CameraClient::setQuality(4);
+    CameraClient::setQuality(CAMERA_QUALITY_CAPTURE);
     
     isTimelapseMode = true;
     photoCount = 0;
